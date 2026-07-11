@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: aegis
+      POSTGRES_USER: aegis
+      POSTGRES_PASSWORD: aegis-dev-only
+    ports:
+      - "5432:5432"
+    volumes:
+      - aegis-postgres:/var/lib/postgresql/data
+
+  app:
+    build: .
+    environment:
+      PORT: 8787
+      AEGIS_STORAGE_DRIVER: postgres
+      DATABASE_URL: postgresql://aegis:aegis-dev-only@postgres:5432/aegis
+    ports:
+      - "8787:8787"
+    depends_on:
+      - postgres
+
+volumes:
+  aegis-postgres:

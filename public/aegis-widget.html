@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>AEGIS 儀表板</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0f16;
+        --panel: #171d2a;
+        --panel-2: #20283a;
+        --line: #30394f;
+        --text: #f4f7fc;
+        --muted: #aab5c9;
+        --accent: #82a8ff;
+        --good: #70d99b;
+      }
+      * { box-sizing: border-box; }
+      html, body { width: 100%; min-height: 100%; margin: 0; }
+      body {
+        padding: 12px;
+        background: radial-gradient(circle at top right, #172449 0, var(--bg) 42%);
+        color: var(--text);
+        font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+      }
+      button { font: inherit; }
+      .shell { max-width: 760px; margin: 0 auto; }
+      header { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 20px; letter-spacing: .02em; }
+      .subtitle { color: var(--muted); font-size: 12px; }
+      .refresh {
+        border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px;
+        background: var(--panel-2); color: var(--text); cursor: pointer;
+      }
+      .refresh:disabled { opacity: .55; cursor: wait; }
+      .hero, .card {
+        border: 1px solid var(--line); border-radius: 16px;
+        background: color-mix(in srgb, var(--panel) 92%, transparent); box-shadow: 0 12px 30px #0004;
+      }
+      .hero { padding: 16px; margin-bottom: 10px; }
+      .hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+      .name { font-size: 24px; font-weight: 800; }
+      .role, .location { color: var(--muted); }
+      .revision { color: var(--accent); font: 12px ui-monospace, monospace; }
+      .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+      .stat { padding: 9px; background: var(--panel-2); border-radius: 11px; min-width: 0; }
+      .stat-label { color: var(--muted); font-size: 11px; }
+      .stat-value { font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      nav { display: flex; gap: 6px; overflow-x: auto; margin: 10px 0; padding-bottom: 2px; }
+      nav button {
+        flex: 0 0 auto; padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px;
+        background: var(--panel); color: var(--muted); cursor: pointer;
+      }
+      nav button[aria-selected="true"] { color: #071020; background: var(--accent); border-color: var(--accent); font-weight: 800; }
+      .panel { display: none; }
+      .panel.active { display: block; }
+      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .card { padding: 13px; min-width: 0; }
+      .card h2 { font-size: 15px; margin: 0 0 8px; }
+      .empty { color: var(--muted); padding: 14px; text-align: center; }
+      .list { display: grid; gap: 7px; }
+      .row { padding: 9px 10px; background: var(--panel-2); border-radius: 10px; }
+      .row-head { display: flex; gap: 8px; justify-content: space-between; }
+      .row-title { font-weight: 750; min-width: 0; overflow-wrap: anywhere; }
+      .pill { flex: 0 0 auto; color: var(--accent); font-size: 12px; }
+      .note { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+      .ok { color: var(--good); }
+      #status { min-height: 18px; margin: 8px 2px 0; color: var(--muted); font-size: 12px; }
+      @media (max-width: 560px) {
+        body { padding: 8px; }
+        .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .grid { grid-template-columns: 1fr; }
+        .hero { padding: 13px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div>
+          <h1>AEGIS</h1>
+          <div class="subtitle" id="world-title">等待權威狀態…</div>
+        </div>
+        <button class="refresh" id="refresh" type="button">重新整理</button>
+      </header>
+
+      <section class="hero">
+        <div class="hero-top">
+          <div>
+            <div class="name" id="player-name">未建立角色</div>
+            <div class="role" id="player-role">—</div>
+            <div class="location" id="player-location">—</div>
+          </div>
+          <div class="revision" id="revision">rev —</div>
+        </div>
+        <div class="stats" id="stats"></div>
+      </section>
+
+      <nav aria-label="AEGIS 資料分類">
+        <button type="button" data-tab="overview" aria-selected="true">總覽</button>
+        <button type="button" data-tab="inventory" aria-selected="false">背包</button>
+        <button type="button" data-tab="quests" aria-selected="false">任務</button>
+        <button type="button" data-tab="saves" aria-selected="false">存檔</button>
+      </nav>
+
+      <section class="panel active" id="panel-overview">
+        <div class="grid">
+          <article class="card"><h2>角色屬性</h2><div class="list" id="attributes"></div></article>
+          <article class="card"><h2>最近事件</h2><div class="list" id="history"></div></article>
+        </div>
+      </section>
+      <section class="panel" id="panel-inventory"><article class="card"><h2>背包</h2><div class="list" id="inventory"></div></article></section>
+      <section class="panel" id="panel-quests"><article class="card"><h2>任務</h2><div class="list" id="quests"></div></article></section>
+      <section class="panel" id="panel-saves"><article class="card"><h2>Save Slots</h2><div class="list" id="saves"></div></article></section>
+      <div id="status" role="status"></div>
+    </main>
+
+    <script type="module">
+      let dashboard = null;
+      let rpcId = 0;
+      const pending = new Map();
+      const $ = (id) => document.getElementById(id);
+
+      const request = (method, params) => new Promise((resolve, reject) => {
+        const id = ++rpcId;
+        pending.set(id, { resolve, reject });
+        window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+      });
+      const notify = (method, params) => window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== "2.0") return;
+        if (typeof message.id === "number") {
+          const waiter = pending.get(message.id);
+          if (!waiter) return;
+          pending.delete(message.id);
+          message.error ? waiter.reject(message.error) : waiter.resolve(message.result);
+          return;
+        }
+        if (message.method === "ui/notifications/tool-result") update(message.params);
+      }, { passive: true });
+
+      const bridgeReady = request("ui/initialize", {
+        appInfo: { name: "aegis-dashboard", version: "0.1.0" },
+        appCapabilities: {},
+        protocolVersion: "2026-01-26",
+      }).then(() => notify("ui/notifications/initialized", {}));
+
+      function update(response) {
+        const candidate = response?.structuredContent?.result?.dashboard;
+        if (!candidate?.game) return;
+        dashboard = candidate;
+        render();
+      }
+
+      function render() {
+        const game = dashboard.game;
+        const player = game.player || {};
+        const world = game.world || {};
+        const location = player.location || {};
+        $("world-title").textContent = [world.name || game.title, world.genre].filter(Boolean).join("｜");
+        $("player-name").textContent = player.name || "未建立角色";
+        $("player-role").textContent = [player.race, player.role].filter(Boolean).join("・") || "—";
+        $("player-location").textContent = [location.region, location.location, location.sublocation].filter(Boolean).join(" › ") || "位置未知";
+        $("revision").textContent = `rev ${game.revision}`;
+
+        renderStats(player);
+        renderObject($("attributes"), player.attributes, "尚無屬性資料");
+        renderHistory($("history"), game.recentHistory || []);
+        renderEntities($("inventory"), game.inventory || [], "背包目前是空的", item => ({
+          title: item.name || "未命名物品",
+          badge: item.qty == null ? "" : `× ${item.qty}`,
+          note: [item.category, item.quality, item.note].filter(Boolean).join("・"),
+        }));
+        renderEntities($("quests"), game.quests || [], "目前沒有任務", item => ({
+          title: item.name || item.title || "未命名任務",
+          badge: item.status || "",
+          note: item.description || item.note || formatObjective(item.objectives),
+        }));
+        renderEntities($("saves"), dashboard.saves || [], "尚未建立存檔", item => ({
+          title: item.name || "未命名存檔",
+          badge: `rev ${item.sourceRevision}`,
+          note: `${formatDate(item.createdAt)}｜${item.saveId}`,
+        }));
+        $("status").textContent = `最後更新：${formatDate(game.updatedAt)}`;
+      }
+
+      function renderStats(player) {
+        const stats = [
+          ["HP", player.hp ?? "—"], ["MP", player.mp ?? "—"],
+          ["等級", player.level ?? "—"], ["金錢", player.money ?? 0],
+          ["日期", player.date ?? "—"], ["時間", player.time ?? "—"],
+          ["季節", player.season ?? "—"], ["天氣", player.weather ?? "—"],
+        ];
+        const root = $("stats"); root.replaceChildren();
+        for (const [label, value] of stats) {
+          const cell = el("div", "stat");
+          cell.append(el("div", "stat-label", label), el("div", "stat-value", String(value)));
+          root.append(cell);
+        }
+      }
+
+      function renderObject(root, object, emptyText) {
+        root.replaceChildren();
+        const entries = object && typeof object === "object" ? Object.entries(object) : [];
+        if (!entries.length) return root.append(el("div", "empty", emptyText));
+        for (const [key, value] of entries) root.append(row(key, "", display(value)));
+      }
+
+      function renderHistory(root, items) {
+        root.replaceChildren();
+        if (!items.length) return root.append(el("div", "empty", "尚無事件紀錄"));
+        items.slice().reverse().forEach((item, index) => root.append(row(`事件 ${items.length - index}`, "", display(item))));
+      }
+
+      function renderEntities(root, items, emptyText, map) {
+        root.replaceChildren();
+        if (!items.length) return root.append(el("div", "empty", emptyText));
+        items.forEach(item => { const view = map(item || {}); root.append(row(view.title, view.badge, view.note)); });
+      }
+
+      function row(title, badge, note) {
+        const outer = el("div", "row");
+        const head = el("div", "row-head");
+        head.append(el("div", "row-title", String(title || "—")), el("div", "pill", String(badge || "")));
+        outer.append(head);
+        if (note) outer.append(el("div", "note", String(note)));
+        return outer;
+      }
+
+      function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      }
+
+      function display(value) {
+        if (value == null || value === "") return "—";
+        if (typeof value === "object") return JSON.stringify(value);
+        return String(value);
+      }
+      function formatObjective(value) { return Array.isArray(value) ? value.map(display).join("、") : ""; }
+      function formatDate(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? String(value || "—") : date.toLocaleString("zh-TW"); }
+
+      document.querySelectorAll("nav button").forEach(button => button.addEventListener("click", () => {
+        document.querySelectorAll("nav button").forEach(item => item.setAttribute("aria-selected", String(item === button)));
+        document.querySelectorAll(".panel").forEach(panel => panel.classList.toggle("active", panel.id === `panel-${button.dataset.tab}`));
+      }));
+
+      $("refresh").addEventListener("click", async () => {
+        if (!dashboard?.game?.gameId) return;
+        $("refresh").disabled = true;
+        $("status").textContent = "正在讀取權威狀態…";
+        try {
+          await bridgeReady;
+          const response = await request("tools/call", { name: "aegis_show_dashboard", arguments: { game_id: dashboard.game.gameId } });
+          update(response);
+        } catch (error) {
+          $("status").textContent = `重新整理失敗：${error?.message || "未知錯誤"}`;
+        } finally {
+          $("refresh").disabled = false;
+        }
+      });
+
+      const legacyOutput = window.openai?.toolOutput;
+      if (legacyOutput) update({ structuredContent: legacyOutput });
+    </script>
+  </body>
+</html>
