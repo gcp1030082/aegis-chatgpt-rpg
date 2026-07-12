@@ -22,7 +22,7 @@ export async function startHttpServer(
 
     if (req.method === "GET" && (pathname === "/" || pathname === "/healthz")) {
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: true, service: "aegis-rpg", version: "0.1.1" }));
+      res.end(JSON.stringify({ ok: true, service: "aegis-rpg", version: "0.2.0" }));
       return;
     }
     if (config.enableLegacyAdmin && req.method === "GET" && pathname === "/admin") {
