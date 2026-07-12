@@ -18,13 +18,14 @@ export async function startHttpServer(
   const server = createServer(async (req, res) => {
     if (!req.url) return sendText(res, 400, "Missing URL");
     const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+    const pathname = normalizePath(url.pathname);
 
-    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/healthz")) {
+    if (req.method === "GET" && (pathname === "/" || pathname === "/healthz")) {
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ ok: true, service: "aegis-rpg", version: "0.1.1" }));
       return;
     }
-    if (config.enableLegacyAdmin && req.method === "GET" && url.pathname === "/admin") {
+    if (config.enableLegacyAdmin && req.method === "GET" && pathname === "/admin") {
       try {
         const html = await readFile(join(config.legacyDir, "aegis_companion_v6_7_7.html"), "utf8");
         res.writeHead(200, securityHeaders("text/html; charset=utf-8"));
@@ -34,7 +35,7 @@ export async function startHttpServer(
       }
       return;
     }
-    if (req.method === "OPTIONS" && url.pathname === mcpPath) {
+    if (req.method === "OPTIONS" && pathname === mcpPath) {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
@@ -47,7 +48,7 @@ export async function startHttpServer(
     }
 
     const mcpMethods = new Set(["POST", "GET", "DELETE"]);
-    if (url.pathname === mcpPath && req.method && mcpMethods.has(req.method)) {
+    if (pathname === mcpPath && req.method && mcpMethods.has(req.method)) {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
       const mcpServer = createAegisMcpServer(service, widgetHtml);
@@ -83,6 +84,10 @@ export async function startHttpServer(
   process.once("SIGTERM", () => void shutdown());
   process.once("SIGINT", () => void shutdown());
   return server;
+}
+
+function normalizePath(pathname: string): string {
+  return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
 }
 
 function securityHeaders(contentType: string) {
