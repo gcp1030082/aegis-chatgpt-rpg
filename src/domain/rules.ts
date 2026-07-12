@@ -63,4 +63,18 @@ export const CORE_RULES: RuntimeRule[] = [
     triggers: ["movement", "rest", "combat", "crafting"],
     instruction: "只有實際耗時的行動推進時間與 tick；介面查詢、讀檔與純說明不推進世界。",
   },
+  {
+    id: "SURVIVAL_001",
+    category: "state",
+    priority: "Critical",
+    triggers: ["movement", "rest", "combat", "consumption"],
+    instruction: "實際遊戲時間流逝必須呼叫 aegis_advance_time 結算飽食度與補水度；食用或飲用物品必須呼叫 aegis_use_item，不得只在敘述中處理。",
+  },
+  {
+    id: "SURVIVAL_002",
+    category: "survival",
+    priority: "High",
+    triggers: ["movement", "rest", "combat", "consumption"],
+    instruction: "生存懲罰必須依狀態階段漸進；飽食度或補水度為 0 時不得立即死亡，只能在持續經過時間後產生合理生命或身體異常影響。",
+  },
 ];

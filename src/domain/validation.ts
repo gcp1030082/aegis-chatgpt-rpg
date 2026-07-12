@@ -1,5 +1,6 @@
 import { AegisError } from "./errors.js";
 import type { GameState, JsonObject, JsonValue } from "./types.js";
+import { isItemCategory } from "./inventory.js";
 
 const GAME_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
@@ -57,6 +58,9 @@ export function validateGameState(state: GameState, maxBytes: number): void {
   if (!Number.isInteger(state.revision) || state.revision < 0) {
     throw new AegisError("INVALID_STATE", "revision 必須是非負整數。");
   }
+  for (const [key, value] of [["world", state.world], ["player", state.player], ["history", state.history], ["engine", state.engine]] as const) {
+    if (!isObject(value)) throw new AegisError("INVALID_STATE", `${key} 必須是物件。`);
+  }
   for (const key of ["inventory", "npcs", "compendium", "map", "quests"] as const) {
     if (!Array.isArray(state[key])) {
       throw new AegisError("INVALID_STATE", `${key} 必須是陣列。`);
@@ -69,6 +73,10 @@ export function validateGameState(state: GameState, maxBytes: number): void {
   }
 
   state.inventory.forEach((item, index) => {
+    if (!isObject(item)) throw new AegisError("INVALID_STATE", `inventory[${index}] 必須是物件。`);
+    if (!isItemCategory(item.category)) {
+      throw new AegisError("INVALID_STATE", `inventory[${index}].category 不是有效的主要分類。`);
+    }
     for (const key of ["quantity", "qty"] as const) {
       const quantity = item[key];
       if (typeof quantity === "number" && (!Number.isFinite(quantity) || quantity < 0)) {
@@ -83,6 +91,64 @@ export function validateGameState(state: GameState, maxBytes: number): void {
       throw new AegisError("INVALID_STATE", `inventory[${index}] 的 quantity 與 qty 不可互相矛盾。`);
     }
   });
+
+  if (!Array.isArray(state.player.skills)) {
+    throw new AegisError("INVALID_STATE", "player.skills 必須是陣列。");
+  }
+  if (!isObject(state.player.equipment)) {
+    throw new AegisError("INVALID_STATE", "player.equipment 必須是物件。");
+  }
+  if (!isObject(state.player.attributes)) {
+    throw new AegisError("INVALID_STATE", "player.attributes 必須是物件。");
+  }
+  const survival = state.player.survival;
+  if (!isObject(survival)) throw new AegisError("INVALID_STATE", "player.survival 必須是物件。");
+  for (const key of ["hunger", "hydration"] as const) {
+    const value = survival[key];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
+      throw new AegisError("INVALID_STATE", `player.survival.${key} 必須是 0～100 的有限數字。`);
+    }
+  }
+  const elapsed = survival.elapsedGameMinutes;
+  if (typeof elapsed !== "number" || !Number.isInteger(elapsed) || elapsed < 0) {
+    throw new AegisError("INVALID_STATE", "player.survival.elapsedGameMinutes 必須是非負整數。");
+  }
+  if (!Array.isArray(survival.modifiers)) {
+    throw new AegisError("INVALID_STATE", "player.survival.modifiers 必須是陣列。");
+  }
+  survival.modifiers.forEach((raw, index) => {
+    if (!isObject(raw)) {
+      throw new AegisError("INVALID_STATE", `player.survival.modifiers[${index}] 必須是物件。`);
+    }
+    for (const key of ["hungerRateMultiplier", "hydrationRateMultiplier"] as const) {
+      const value = raw[key];
+      if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 5)) {
+        throw new AegisError("INVALID_STATE", `player.survival.modifiers[${index}].${key} 必須是 0～5 的有限數字。`);
+      }
+    }
+  });
+
+  for (const [index, item] of state.inventory.entries()) {
+    for (const key of ["hungerRestore", "hydrationRestore"] as const) {
+      const value = item[key];
+      if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) {
+        throw new AegisError("INVALID_STATE", `inventory[${index}].${key} 必須是非負有限數字。`);
+      }
+    }
+    for (const key of ["usesRemaining", "maxUses"] as const) {
+      const value = item[key];
+      if (value !== undefined && (typeof value !== "number" || !Number.isInteger(value) || value < 0)) {
+        throw new AegisError("INVALID_STATE", `inventory[${index}].${key} 必須是非負整數。`);
+      }
+    }
+    if (
+      typeof item.usesRemaining === "number" &&
+      typeof item.maxUses === "number" &&
+      item.usesRemaining > item.maxUses
+    ) {
+      throw new AegisError("INVALID_STATE", `inventory[${index}] 的剩餘容量不得超過最大容量。`);
+    }
+  }
 
   const money = state.player.money;
   if (typeof money === "number" && !Number.isFinite(money)) {

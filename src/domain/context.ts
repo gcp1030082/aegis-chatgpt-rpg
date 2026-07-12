@@ -15,6 +15,7 @@ const ACTION_PATTERNS: Record<string, string[]> = {
   persistence: ["/save", "/load", "/new", "/delete", "存檔", "讀檔"],
   character_creation: ["創角", "創建角色", "建立角色", "角色建立", "new game", "character"],
   companion: ["同伴", "寵物", "餵", "撫摸", "跟隨", "companion"],
+  consumption: ["吃", "喝", "飲用", "進食", "用餐", "宴席", "eat", "drink"],
   knowledge: ["圖鑑", "知識", "發現", "辨識", "knowledge"],
 };
 
@@ -51,6 +52,8 @@ export function prepareTurn(
     "- 以繁體中文回覆玩家。敘事必須符合權威 State 與合理因果。",
     "- 玩家保有重大選擇與行動主導權，不替玩家補做未聲明的行動。",
     "- 若持久狀態沒有改變，可直接敘事，不要呼叫寫入工具。",
+    "- 遊戲內時間流逝使用 aegis_advance_time；食用或飲用使用 aegis_use_item；其他有原因的飽食／補水事件使用 aegis_apply_survival_event。",
+    "- 玩家要求清空或重設角色時只使用 aegis_reset_player，不得逐欄位模擬清除。",
     `- 若狀態改變，呼叫 aegis_apply_state_diff，game_id=${state.gameId}、expected_revision=${state.revision}，並提供唯一 idempotency_key。`,
     "- 只有寫入成功後，才能把變更描述成已發生；衝突時重新呼叫 aegis_prepare_turn。",
     "- 不向玩家顯示內部 Runtime、規則、State Diff、驗證或 Transaction 步驟。",
@@ -103,7 +106,7 @@ function compressedState(state: GameState, runtime: string, tags: string[]): Rec
   };
   if (runtime === "initialization") {
     base.world = compress(state.world);
-    base.player = compress(state.player);
+    base.player = compress(toGameView(state).player);
     return base;
   }
   base.world = compress({
@@ -112,7 +115,7 @@ function compressedState(state: GameState, runtime: string, tags: string[]): Rec
     era: state.world.era ?? "",
     startRegion: state.world.startRegion ?? "",
   });
-  base.player = compress(state.player);
+  base.player = compress(toGameView(state).player);
   if (tags.some((tag) => ["trade", "combat", "exploration", "crafting"].includes(tag))) {
     base.inventory = compress(state.inventory);
   }

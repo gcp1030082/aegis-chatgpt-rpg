@@ -1,6 +1,8 @@
 import type { GameState, JsonObject } from "./types.js";
+import { normalizeItemCategory } from "./inventory.js";
+import { survivalView } from "./survival.js";
 
-export const AEGIS_VERSION = "6.7.7-mcp.1";
+export const AEGIS_VERSION = "6.7.7-mcp.2";
 
 export function defaultGameState(gameId: string, title = "AEGIS 冒險"): GameState {
   const now = new Date().toISOString();
@@ -25,29 +27,7 @@ export function defaultGameState(gameId: string, title = "AEGIS 冒險"): GameSt
       startRegion: "",
       notes: "",
     },
-    player: {
-      name: "",
-      gender: "",
-      age: "",
-      race: "",
-      role: "",
-      background: "",
-      attributes: {},
-      hp: "",
-      mp: "",
-      sp: "",
-      level: "",
-      money: 0,
-      skills: [],
-      equipment: {},
-      location: { region: "", location: "", sublocation: "" },
-      date: "",
-      time: "",
-      season: "",
-      weather: "",
-      tick: 0,
-      initialized: false,
-    },
+    player: defaultPlayerState(),
     inventory: [],
     npcs: [],
     compendium: [],
@@ -63,14 +43,52 @@ export function defaultGameState(gameId: string, title = "AEGIS 冒險"): GameSt
   };
 }
 
+export function defaultPlayerState(): JsonObject {
+  return {
+    initialized: false,
+    tick: 0,
+    money: 0,
+    attributes: {},
+    skills: [],
+    equipment: {},
+    survival: {
+      hunger: 100,
+      hydration: 100,
+      elapsedGameMinutes: 0,
+      modifiers: [],
+    },
+  };
+}
+
+export function migrateGameState(state: GameState): GameState {
+  const migrated = cloneState(state);
+  if (migrated.player.skills === undefined) migrated.player.skills = [];
+  if (migrated.player.equipment === undefined) migrated.player.equipment = {};
+  if (migrated.player.attributes === undefined) migrated.player.attributes = {};
+  if (migrated.player.money === undefined) migrated.player.money = 0;
+  if (migrated.player.tick === undefined) migrated.player.tick = 0;
+  if (migrated.player.initialized === undefined) migrated.player.initialized = false;
+  const survival = asObject(migrated.player.survival);
+  if (survival.hunger === undefined) survival.hunger = 100;
+  if (survival.hydration === undefined) survival.hydration = 100;
+  if (survival.elapsedGameMinutes === undefined) survival.elapsedGameMinutes = 0;
+  if (survival.modifiers === undefined) survival.modifiers = [];
+  migrated.player.survival = survival;
+  migrated.inventory = migrated.inventory.map((item) => normalizeItemCategory(item));
+  return migrated;
+}
+
 export function toGameView(state: GameState) {
+  const player = cloneState(state.player);
+  const storedSurvival = asObject(player.survival);
+  player.survival = { ...storedSurvival, ...survivalView(player) };
   return {
     gameId: state.gameId,
     title: state.title,
     revision: state.revision,
     updatedAt: state.updatedAt,
     world: state.world,
-    player: state.player,
+    player,
     inventory: state.inventory,
     quests: state.quests,
     recentHistory: state.history.recent.slice(-12),

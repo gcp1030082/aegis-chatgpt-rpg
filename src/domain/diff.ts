@@ -1,5 +1,6 @@
 import { cloneState } from "./default-state.js";
 import { AegisError } from "./errors.js";
+import { normalizeItemCategory } from "./inventory.js";
 import type { ApplyDiffResult, GameState, JsonObject, JsonValue } from "./types.js";
 import { assertSafeJson, isObject, validateGameState } from "./validation.js";
 
@@ -61,6 +62,12 @@ export function applyStateDiff(
     applyHistoryPatch(next, rawDiff.history, changedPaths);
   }
 
+  if (changedPaths.size === 0) {
+    throw new AegisError("NO_STATE_CHANGE", "提交內容沒有造成任何狀態變更。", {
+      changedPaths: [],
+    });
+  }
+
   next.revision = current.revision + 1;
   next.updatedAt = new Date().toISOString();
   appendTransaction(next, options.idempotencyKey, options.turnSummary, [...changedPaths]);
@@ -72,10 +79,17 @@ export function applyStateDiff(
 
 function applyPlayerPatch(state: GameState, patch: JsonObject, changed: Set<string>): void {
   const rest = cloneState(patch);
-  if (Array.isArray(rest.skills)) {
-    const currentSkills = Array.isArray(state.player.skills) ? state.player.skills : [];
-    state.player.skills = upsertObjects(currentSkills, rest.skills, "player.skills", changed);
+  if (rest.skills !== undefined) {
+    if (!Array.isArray(rest.skills)) throw invalidSection("player.skills", "陣列");
+    const skills = objectsOnly(rest.skills, "player.skills");
+    if (!sameJson(state.player.skills, skills)) {
+      state.player.skills = skills;
+      changed.add("player.skills");
+    }
     delete rest.skills;
+  }
+  if (rest.equipment !== undefined && !isObject(rest.equipment)) {
+    throw invalidSection("player.equipment", "物件");
   }
   if (isObject(rest.equipment)) {
     const currentEquipment = isObject(state.player.equipment) ? state.player.equipment : {};
@@ -92,16 +106,25 @@ function applyInventoryPatch(
   changed: Set<string>,
 ): JsonObject[] {
   if (Array.isArray(patch)) {
+    const replacement = normalizeInventory(objectsOnly(patch, "inventory"), "inventory", true);
+    if (sameJson(current, replacement)) return cloneState(current);
     changed.add("inventory");
-    return normalizeInventory(objectsOnly(patch, "inventory"), "inventory");
+    return replacement;
   }
   if (!isObject(patch)) throw invalidSection("inventory", "陣列或物件");
 
   let result = cloneState(current);
   if (patch.replace !== undefined) {
     if (!Array.isArray(patch.replace)) throw invalidSection("inventory.replace", "陣列");
-    result = normalizeInventory(objectsOnly(patch.replace, "inventory.replace"), "inventory.replace");
-    changed.add("inventory");
+    const replacement = normalizeInventory(
+      objectsOnly(patch.replace, "inventory.replace"),
+      "inventory.replace",
+      true,
+    );
+    if (!sameJson(result, replacement)) {
+      result = replacement;
+      changed.add("inventory");
+    }
   }
   if (patch.upsert !== undefined) {
     if (!Array.isArray(patch.upsert)) throw invalidSection("inventory.upsert", "陣列");
@@ -154,7 +177,7 @@ function applyInventoryPatch(
       changed.add("inventory");
     }
   }
-  return normalizeInventory(result, "inventory").filter((item) => item.quantity !== 0);
+  return normalizeInventory(result, "inventory", true).filter((item) => item.quantity !== 0);
 }
 
 function applyCollectionPatch(
@@ -163,13 +186,23 @@ function applyCollectionPatch(
   path: string,
   changed: Set<string>,
 ): JsonObject[] {
-  if (Array.isArray(patch)) return upsertObjects(current, patch, path, changed);
+  if (Array.isArray(patch)) {
+    const replacement = objectsOnly(patch, path);
+    if (sameJson(current, replacement)) return cloneState(current);
+    changed.add(path);
+    return replacement;
+  }
   if (!isObject(patch)) throw invalidSection(path, "陣列或物件");
+  const unknown = Object.keys(patch).filter((key) => !["replace", "upsert", "remove"].includes(key));
+  if (unknown.length) throw new AegisError("INVALID_DIFF", `${path} 含有未知操作：${unknown.join(", ")}`);
   let result = cloneState(current);
   if (patch.replace !== undefined) {
     if (!Array.isArray(patch.replace)) throw invalidSection(`${path}.replace`, "陣列");
-    result = objectsOnly(patch.replace, `${path}.replace`);
-    changed.add(path);
+    const replacement = objectsOnly(patch.replace, `${path}.replace`);
+    if (!sameJson(result, replacement)) {
+      result = replacement;
+      changed.add(path);
+    }
   }
   if (patch.upsert !== undefined) {
     if (!Array.isArray(patch.upsert)) throw invalidSection(`${path}.upsert`, "陣列");
@@ -192,12 +225,19 @@ function applyHistoryPatch(state: GameState, patch: JsonValue, changed: Set<stri
     return;
   }
   if (!isObject(patch)) throw invalidSection("history", "陣列或物件");
+  const unknown = Object.keys(patch).filter((key) => !["recent", "major", "summary", "append"].includes(key));
+  if (unknown.length) throw new AegisError("INVALID_DIFF", `history 含有未知操作：${unknown.join(", ")}`);
   for (const key of ["recent", "major", "summary"] as const) {
     const value = patch[key];
     if (value === undefined) continue;
     if (!Array.isArray(value)) throw invalidSection(`history.${key}`, "陣列");
-    state.history[key].push(...cloneState(value));
-    if (value.length) changed.add(`history.${key}`);
+    if (!sameJson(state.history[key], value)) {
+      state.history[key] = cloneState(value);
+      changed.add(`history.${key}`);
+    }
+  }
+  if (patch.append !== undefined && !Array.isArray(patch.append)) {
+    throw invalidSection("history.append", "陣列");
   }
   if (Array.isArray(patch.append)) {
     state.history.recent.push(...cloneState(patch.append));
@@ -221,8 +261,8 @@ function upsertObjects(
       if (existing) mergeObject(existing, item, `${path}[${index}]`, changed);
     } else {
       result.push(item);
+      changed.add(path);
     }
-    changed.add(path);
   }
   return result;
 }
@@ -324,13 +364,17 @@ function quantityProvided(value: JsonValue | undefined): boolean {
   return value !== undefined && value !== null && value !== "";
 }
 
-function normalizeInventory(items: JsonObject[], path: string): JsonObject[] {
+function normalizeInventory(items: JsonObject[], path: string, strictCategory = false): JsonObject[] {
   return items.map((raw, index) => {
     const item = cloneState(raw);
     item.quantity = inventoryQuantity(item, 1, `${path}[${index}].quantity`);
     delete item.qty;
-    return item;
+    return normalizeItemCategory(item, strictCategory);
   });
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function withoutQuantity(object: JsonObject): JsonObject {

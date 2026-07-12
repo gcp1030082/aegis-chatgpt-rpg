@@ -63,6 +63,12 @@
       .card { padding: 13px; min-width: 0; }
       .card h2 { font-size: 15px; margin: 0 0 4px; }
       .section-intro { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+      .inventory-tabs { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 10px; padding-bottom: 2px; }
+      .inventory-tabs button {
+        flex: 0 0 auto; padding: 6px 10px; border: 1px solid var(--line); border-radius: 9px;
+        background: var(--panel-3); color: var(--muted); cursor: pointer;
+      }
+      .inventory-tabs button[aria-selected="true"] { color: var(--text); border-color: var(--accent); background: #29416f; font-weight: 750; }
       .empty { color: var(--muted); padding: 14px; text-align: center; }
       .list { display: grid; gap: 7px; }
       .row { padding: 9px 10px; background: var(--panel-2); border-radius: 10px; }
@@ -149,6 +155,13 @@
         <article class="card">
           <h2>背包</h2>
           <p class="section-intro">點擊物品可查看數量、效果、來源與完整資料。</p>
+          <div class="inventory-tabs" role="tablist" aria-label="物品分類">
+            <button type="button" data-inventory-category="all" aria-selected="true">全部</button>
+            <button type="button" data-inventory-category="consumable" aria-selected="false">消耗品</button>
+            <button type="button" data-inventory-category="equipment" aria-selected="false">裝備</button>
+            <button type="button" data-inventory-category="misc" aria-selected="false">雜物</button>
+            <button type="button" data-inventory-category="special" aria-selected="false">特殊</button>
+          </div>
           <div class="list" id="inventory"></div>
         </article>
       </section>
@@ -173,6 +186,8 @@
 
     <script type="module">
       let dashboard = null;
+      let inventoryItems = [];
+      let inventoryCategory = "all";
       let rpcId = 0;
       const pending = new Map();
       const $ = (id) => document.getElementById(id);
@@ -199,7 +214,7 @@
       }, { passive: true });
 
       const bridgeReady = request("ui/initialize", {
-        appInfo: { name: "aegis-dashboard", version: "0.2.0" },
+        appInfo: { name: "aegis-dashboard", version: "0.3.0" },
         appCapabilities: {},
         protocolVersion: "2026-01-26",
       }).then(() => notify("ui/notifications/initialized", {}));
@@ -216,7 +231,7 @@
         const player = asRecord(game.player);
         const world = asRecord(game.world);
         const location = asRecord(player.location);
-        const inventory = normalizeCollection(game.inventory);
+        const inventory = normalizeCollection(game.inventory).map(item => ({ ...item, category: inventoryCategoryOf(item) }));
         const skills = normalizeNamedCollection(player.skills);
         const equipment = normalizeEquipment(player.equipment);
         const quests = normalizeCollection(game.quests);
@@ -231,7 +246,8 @@
         renderStats(player);
         renderObject($("attributes"), player.attributes, "尚無屬性資料");
         renderHistory($("history"), game.recentHistory || []);
-        renderInventory($("inventory"), inventory);
+        inventoryItems = inventory;
+        renderInventoryCategory();
         renderEquipment($("equipment"), equipment);
         renderSkills($("skills"), skills);
         renderEntities($("quests"), quests, "目前沒有任務", item => ({
@@ -254,9 +270,14 @@
       }
 
       function renderStats(player) {
+        const survival = asRecord(player.survival);
+        const hunger = boundedMetric(survival.hunger, 100);
+        const hydration = boundedMetric(survival.hydration, 100);
         const stats = [
           ["HP", player.hp ?? "—"], ["MP", player.mp ?? "—"],
           ["等級", player.level ?? "—"], ["金錢", player.money ?? 0],
+          ["飽食度", `${formatMetric(hunger)} / 100｜${survivalStatus("hunger", hunger)}`],
+          ["補水度", `${formatMetric(hydration)} / 100｜${survivalStatus("hydration", hydration)}`],
           ["日期", player.date ?? "—"], ["時間", player.time ?? "—"],
           ["季節", player.season ?? "—"], ["天氣", player.weather ?? "—"],
         ];
@@ -270,14 +291,14 @@
 
       function renderInventory(root, items) {
         root.replaceChildren();
-        if (!items.length) return root.append(el("div", "empty", "背包目前是空的"));
+        if (!items.length) return root.append(el("div", "empty", inventoryCategory === "all" ? "背包目前是空的" : "此分類目前沒有物品"));
         for (const item of items) {
           const name = pick(item, ["name", "title", "名稱"]) || "未命名物品";
           const quantity = pick(item, ["qty", "quantity", "count", "數量"]);
           const description = pick(item, ["description", "info", "lore", "note", "物品資訊", "描述", "說明"]);
           const effect = pick(item, ["effect", "useEffect", "effects", "效果", "使用效果"]);
           const source = pick(item, ["source", "origin", "acquiredFrom", "來源", "取得方式"]);
-          const category = pick(item, ["category", "type", "分類", "類型"]);
+          const category = categoryLabel(item.category);
           const quality = pick(item, ["quality", "rarity", "grade", "品質", "稀有度"]);
           const durability = formatPair(
             pick(item, ["durability", "condition", "耐久度"]),
@@ -290,6 +311,7 @@
             "category", "type", "分類", "類型", "quality", "rarity", "grade", "品質", "稀有度",
             "usage", "use", "使用方式", "weight", "重量", "value", "price", "價值", "價格",
             "durability", "condition", "耐久度", "maxDurability", "最大耐久度", "requirements", "requirement", "使用條件", "需求",
+            "hungerRestore", "hydrationRestore", "usesRemaining", "maxUses", "refillable", "useRestrictions", "extraEffect", "state",
           ]);
           root.append(expandable({
             title: name,
@@ -300,7 +322,14 @@
               field("類型", category),
               field("品質／稀有度", quality),
               field("使用效果", effect, true, true),
+              field("飽食度恢復量", pick(item, ["hungerRestore", "飽食度恢復量"])),
+              field("補水度恢復量", pick(item, ["hydrationRestore", "補水度恢復量"])),
+              field("剩餘容量／次數", formatPair(pick(item, ["usesRemaining", "剩餘容量"]), pick(item, ["maxUses", "最大容量"]))),
+              field("可重新補充", pick(item, ["refillable", "可重新補充"])),
+              field("容器狀態", pick(item, ["state", "狀態"])),
               field("使用方式", pick(item, ["usage", "use", "使用方式"]), false, true),
+              field("使用限制", pick(item, ["useRestrictions", "使用限制"]), false, true),
+              field("額外效果", pick(item, ["extraEffect", "額外效果"]), false, true),
               field("來源", source, true, true),
               field("物品資訊", description, true, true),
               field("重量", pick(item, ["weight", "重量"])),
@@ -311,6 +340,59 @@
             extras: extraFields(item, known),
           }));
         }
+      }
+
+      function renderInventoryCategory() {
+        const filtered = inventoryCategory === "all"
+          ? inventoryItems
+          : inventoryItems.filter(item => item.category === inventoryCategory);
+        renderInventory($("inventory"), filtered);
+      }
+
+      function inventoryCategoryOf(item) {
+        const explicit = String(pick(item, ["category", "分類"]) || "").trim().toLowerCase();
+        const aliases = {
+          consumable: "consumable", food: "consumable", drink: "consumable", potion: "consumable",
+          "消耗品": "consumable", "食物": "consumable", "飲品": "consumable", "飲料": "consumable", "藥水": "consumable",
+          equipment: "equipment", equip: "equipment", weapon: "equipment", armor: "equipment",
+          "裝備": "equipment", "武器": "equipment", "防具": "equipment",
+          misc: "misc", material: "misc", loot: "misc", tool: "misc", document: "misc",
+          "雜物": "misc", "素材": "misc", "材料": "misc", "工具": "misc", "文件": "misc",
+          special: "special", quest: "special", quest_item: "special", key: "special", key_item: "special",
+          "特殊": "special", "任務道具": "special", "鑰匙": "special",
+        };
+        if (aliases[explicit]) return aliases[explicit];
+        const type = String(pick(item, ["type", "類型"]) || "").trim().toLowerCase();
+        if (aliases[type]) return aliases[type];
+        if (item.questItem === true || item.keyItem === true || item.unsellable === true || item.undroppable === true) return "special";
+        if (item.equippable === true || present(item.slot) || present(item.equipmentSlot)) return "equipment";
+        if (item.consumable === true || present(item.hungerRestore) || present(item.hydrationRestore) || present(item.usesRemaining)) return "consumable";
+        return "misc";
+      }
+
+      function categoryLabel(category) {
+        return { consumable: "消耗品", equipment: "裝備", misc: "雜物", special: "特殊" }[category] || "雜物";
+      }
+
+      function boundedMetric(value, fallback) {
+        const number = Number(value);
+        return Number.isFinite(number) ? Math.min(100, Math.max(0, number)) : fallback;
+      }
+
+      function formatMetric(value) { return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, ""); }
+
+      function survivalStatus(metric, value) {
+        if (value >= 75) return "狀態良好";
+        if (metric === "hunger") {
+          if (value >= 50) return "稍有飢餓";
+          if (value >= 25) return "明顯飢餓";
+          if (value > 0) return "嚴重飢餓";
+          return "極端飢餓";
+        }
+        if (value >= 50) return "稍有口渴";
+        if (value >= 25) return "明顯口渴";
+        if (value > 0) return "嚴重脫水";
+        return "極度缺水";
       }
 
       function renderSkills(root, skills) {
@@ -537,6 +619,8 @@
           note: "備註", effect: "效果", effects: "效果", source: "來源", origin: "來源", value: "價值", price: "價格",
           weight: "重量", level: "等級", rank: "階級", cooldown: "冷卻時間", cost: "消耗", proficiency: "熟練度",
           attack: "攻擊力", damage: "傷害", defense: "防禦力", armor: "護甲", durability: "耐久度", maxDurability: "最大耐久度",
+          hungerRestore: "飽食度恢復量", hydrationRestore: "補水度恢復量", usesRemaining: "剩餘容量／次數", maxUses: "最大容量／次數",
+          refillable: "可重新補充", useRestrictions: "使用限制", extraEffect: "額外效果", state: "狀態",
         };
         if (labels[key]) return labels[key];
         return String(key).replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
@@ -549,6 +633,12 @@
       document.querySelectorAll("nav button").forEach(button => button.addEventListener("click", () => {
         document.querySelectorAll("nav button").forEach(item => item.setAttribute("aria-selected", String(item === button)));
         document.querySelectorAll(".panel").forEach(panel => panel.classList.toggle("active", panel.id === `panel-${button.dataset.tab}`));
+      }));
+
+      document.querySelectorAll("[data-inventory-category]").forEach(button => button.addEventListener("click", () => {
+        inventoryCategory = button.dataset.inventoryCategory || "all";
+        document.querySelectorAll("[data-inventory-category]").forEach(item => item.setAttribute("aria-selected", String(item === button)));
+        renderInventoryCategory();
       }));
 
       $("refresh").addEventListener("click", async () => {

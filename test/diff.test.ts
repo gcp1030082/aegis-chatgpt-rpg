@@ -37,7 +37,7 @@ describe("applyStateDiff", () => {
     expect(result.game.world.name).toBe("阿斯特");
     expect(result.game.player.name).toBe("洛恩");
     expect(result.game.inventory).toEqual([
-      { id: "ration", name: "乾糧", quantity: 2, category: "食物", effect: "充飢", source: "旅行包" },
+      { id: "ration", name: "乾糧", quantity: 2, category: "consumable", effect: "充飢", source: "旅行包" },
     ]);
     expect(result.game.player.skills).toEqual([
       { id: "basic-sword", name: "基礎劍術", level: 1, description: "基礎持劍技巧。", source: "村莊教官" },
@@ -64,7 +64,42 @@ describe("applyStateDiff", () => {
       options,
     );
 
-    expect(result.game.inventory).toEqual([{ name: "水袋", quantity: 3, description: "裝水用。" }]);
+    expect(result.game.inventory).toEqual([{ name: "水袋", quantity: 3, description: "裝水用。", category: "misc" }]);
+  });
+
+  it("treats direct arrays as complete replacements, including empty arrays", () => {
+    const state = defaultGameState("main");
+    state.player.skills = [{ id: "skill-1", name: "舊技能" }];
+    state.inventory = [{ id: "item-1", name: "舊物品", quantity: 1, category: "misc" }];
+    state.quests = [{ id: "quest-1", name: "舊任務" }];
+    state.history = { recent: ["近期"], major: ["重大"], summary: ["摘要"] };
+
+    const result = applyStateDiff(
+      state,
+      {
+        player: { skills: [] },
+        inventory: [],
+        quests: [],
+        history: { recent: [], major: [], summary: [] },
+      },
+      options,
+    );
+
+    expect(result.game.player.skills).toEqual([]);
+    expect(result.game.inventory).toEqual([]);
+    expect(result.game.quests).toEqual([]);
+    expect(result.game.history).toEqual({ recent: [], major: [], summary: [] });
+    expect(result.changedPaths).toEqual([
+      "history.major", "history.recent", "history.summary", "inventory", "player.skills", "quests",
+    ]);
+  });
+
+  it("rejects invalid fixed array types and no-op diffs", () => {
+    const state = defaultGameState("main");
+    expect(() => applyStateDiff(state, { player: { skills: { remove: ["舊技能"] } } }, options))
+      .toThrow(/player\.skills 必須是陣列/);
+    expect(() => applyStateDiff(state, { quests: [], inventory: [] }, options))
+      .toThrowError(expect.objectContaining({ code: "NO_STATE_CHANGE" }));
   });
 
   it("rejects protected and unknown top-level fields", () => {
@@ -72,5 +107,23 @@ describe("applyStateDiff", () => {
     expect(() => applyStateDiff(state, { revision: 99 }, options)).toThrow(/不允許/);
     const dangerous = JSON.parse('{"player":{"__proto__":{"admin":true}}}');
     expect(() => applyStateDiff(state, dangerous, options)).toThrow(/禁止欄位/);
+  });
+
+  it("stores exactly one canonical primary category per inventory item", () => {
+    const state = defaultGameState("main");
+    const result = applyStateDiff(state, {
+      inventory: [
+        { id: "food", name: "麵包", category: "食物" },
+        { id: "sword", name: "劍", category: "裝備" },
+        { id: "ore", name: "礦石", category: "素材" },
+        { id: "key", name: "古鑰匙", category: "任務道具" },
+      ],
+    }, options);
+    expect(result.game.inventory.map((item) => item.category)).toEqual([
+      "consumable", "equipment", "misc", "special",
+    ]);
+    expect(() => applyStateDiff(state, {
+      inventory: [{ id: "bad", name: "不明物", category: "多重分類" }],
+    }, options)).toThrow(/category 必須是/);
   });
 });

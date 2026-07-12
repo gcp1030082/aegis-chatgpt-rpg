@@ -6,6 +6,7 @@ export type AegisErrorCode =
   | "INVALID_GAME_ID"
   | "INVALID_STATE"
   | "INVALID_DIFF"
+  | "NO_STATE_CHANGE"
   | "PAYLOAD_TOO_LARGE"
   | "STORAGE_ERROR";
 
