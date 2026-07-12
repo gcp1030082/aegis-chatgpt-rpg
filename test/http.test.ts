@@ -84,5 +84,27 @@ describe("production HTTP surface", () => {
     expect(initialized.status).toBe(200);
     const payload = (await initialized.json()) as { result?: { serverInfo?: { name?: string } } };
     expect(payload.result?.serverInfo?.name).toBe("aegis-rpg");
+
+    const legacyDashboard = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/read",
+        params: { uri: "ui://widget/aegis-dashboard-v1.html" },
+      }),
+    });
+    expect(legacyDashboard.status).toBe(200);
+    const legacyPayload = (await legacyDashboard.json()) as {
+      result?: { contents?: Array<{ uri?: string; text?: string }> };
+    };
+    expect(legacyPayload.result?.contents?.[0]?.uri).toBe(
+      "ui://widget/aegis-dashboard-v1.html",
+    );
+    expect(legacyPayload.result?.contents?.[0]?.text).toContain('data-tab="equipment"');
   });
 });
