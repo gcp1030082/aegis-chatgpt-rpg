@@ -10,11 +10,13 @@
         --bg: #0b0f16;
         --panel: #171d2a;
         --panel-2: #20283a;
+        --panel-3: #111827;
         --line: #30394f;
         --text: #f4f7fc;
         --muted: #aab5c9;
         --accent: #82a8ff;
         --good: #70d99b;
+        --warning: #e7c778;
       }
       * { box-sizing: border-box; }
       html, body { width: 100%; min-height: 100%; margin: 0; }
@@ -24,7 +26,7 @@
         color: var(--text);
         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
       }
-      button { font: inherit; }
+      button, summary { font: inherit; -webkit-tap-highlight-color: transparent; }
       .shell { max-width: 760px; margin: 0 auto; }
       header { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
       h1 { margin: 0; font-size: 20px; letter-spacing: .02em; }
@@ -47,17 +49,20 @@
       .stat { padding: 9px; background: var(--panel-2); border-radius: 11px; min-width: 0; }
       .stat-label { color: var(--muted); font-size: 11px; }
       .stat-value { font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      nav { display: flex; gap: 6px; overflow-x: auto; margin: 10px 0; padding-bottom: 2px; }
+      nav { display: flex; gap: 6px; overflow-x: auto; margin: 10px 0; padding-bottom: 3px; scrollbar-width: thin; }
       nav button {
-        flex: 0 0 auto; padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px;
-        background: var(--panel); color: var(--muted); cursor: pointer;
+        display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 7px 11px;
+        border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); cursor: pointer;
       }
       nav button[aria-selected="true"] { color: #071020; background: var(--accent); border-color: var(--accent); font-weight: 800; }
+      .tab-count { min-width: 17px; padding: 0 5px; border-radius: 999px; background: #ffffff18; font-size: 11px; text-align: center; }
+      nav button[aria-selected="true"] .tab-count { background: #0710201f; }
       .panel { display: none; }
       .panel.active { display: block; }
       .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
       .card { padding: 13px; min-width: 0; }
-      .card h2 { font-size: 15px; margin: 0 0 8px; }
+      .card h2 { font-size: 15px; margin: 0 0 4px; }
+      .section-intro { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
       .empty { color: var(--muted); padding: 14px; text-align: center; }
       .list { display: grid; gap: 7px; }
       .row { padding: 9px 10px; background: var(--panel-2); border-radius: 10px; }
@@ -65,13 +70,41 @@
       .row-title { font-weight: 750; min-width: 0; overflow-wrap: anywhere; }
       .pill { flex: 0 0 auto; color: var(--accent); font-size: 12px; }
       .note { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+      .entity {
+        overflow: hidden; border: 1px solid transparent; border-radius: 12px;
+        background: var(--panel-2); transition: border-color .15s ease, background .15s ease;
+      }
+      .entity[open] { border-color: #4b5d83; background: #1d2638; }
+      .entity summary { list-style: none; cursor: pointer; padding: 11px 12px; }
+      .entity summary::-webkit-details-marker { display: none; }
+      .entity-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .entity-heading { min-width: 0; }
+      .entity-title { font-weight: 780; overflow-wrap: anywhere; }
+      .entity-preview { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+      .entity-meta { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+      .entity-badge { color: var(--accent); font-size: 12px; white-space: nowrap; }
+      .chevron { color: var(--muted); font-size: 16px; line-height: 1; transition: transform .15s ease; }
+      .entity[open] .chevron { transform: rotate(180deg); }
+      .entity-body { padding: 11px 12px 12px; border-top: 1px solid var(--line); }
+      .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .detail {
+        min-width: 0; padding: 8px 9px; border: 1px solid #2d3850; border-radius: 9px; background: var(--panel-3);
+      }
+      .detail.wide { grid-column: 1 / -1; }
+      .detail-label { margin-bottom: 2px; color: var(--muted); font-size: 11px; }
+      .detail-value { overflow-wrap: anywhere; white-space: pre-wrap; }
+      .detail-value.missing { color: #7f8aa0; font-style: italic; }
+      .extra-title { margin: 11px 0 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
       .ok { color: var(--good); }
+      .warning { color: var(--warning); }
       #status { min-height: 18px; margin: 8px 2px 0; color: var(--muted); font-size: 12px; }
       @media (max-width: 560px) {
         body { padding: 8px; }
         .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .grid { grid-template-columns: 1fr; }
+        .grid, .detail-grid { grid-template-columns: 1fr; }
+        .detail.wide { grid-column: auto; }
         .hero { padding: 13px; }
+        .entity summary { padding: 12px; }
       }
     </style>
   </head>
@@ -99,9 +132,11 @@
 
       <nav aria-label="AEGIS 資料分類">
         <button type="button" data-tab="overview" aria-selected="true">總覽</button>
-        <button type="button" data-tab="inventory" aria-selected="false">背包</button>
-        <button type="button" data-tab="quests" aria-selected="false">任務</button>
-        <button type="button" data-tab="saves" aria-selected="false">存檔</button>
+        <button type="button" data-tab="inventory" aria-selected="false">背包 <span class="tab-count" id="inventory-count">0</span></button>
+        <button type="button" data-tab="equipment" aria-selected="false">裝備 <span class="tab-count" id="equipment-count">0</span></button>
+        <button type="button" data-tab="skills" aria-selected="false">技能 <span class="tab-count" id="skills-count">0</span></button>
+        <button type="button" data-tab="quests" aria-selected="false">任務 <span class="tab-count" id="quests-count">0</span></button>
+        <button type="button" data-tab="saves" aria-selected="false">存檔 <span class="tab-count" id="saves-count">0</span></button>
       </nav>
 
       <section class="panel active" id="panel-overview">
@@ -110,7 +145,27 @@
           <article class="card"><h2>最近事件</h2><div class="list" id="history"></div></article>
         </div>
       </section>
-      <section class="panel" id="panel-inventory"><article class="card"><h2>背包</h2><div class="list" id="inventory"></div></article></section>
+      <section class="panel" id="panel-inventory">
+        <article class="card">
+          <h2>背包</h2>
+          <p class="section-intro">點擊物品可查看數量、效果、來源與完整資料。</p>
+          <div class="list" id="inventory"></div>
+        </article>
+      </section>
+      <section class="panel" id="panel-equipment">
+        <article class="card">
+          <h2>裝備</h2>
+          <p class="section-intro">依部位顯示目前裝備；點擊可查看能力、耐久與來源。</p>
+          <div class="list" id="equipment"></div>
+        </article>
+      </section>
+      <section class="panel" id="panel-skills">
+        <article class="card">
+          <h2>技能</h2>
+          <p class="section-intro">點擊技能可查看等級、效果、消耗、來源與使用條件。</p>
+          <div class="list" id="skills"></div>
+        </article>
+      </section>
       <section class="panel" id="panel-quests"><article class="card"><h2>任務</h2><div class="list" id="quests"></div></article></section>
       <section class="panel" id="panel-saves"><article class="card"><h2>Save Slots</h2><div class="list" id="saves"></div></article></section>
       <div id="status" role="status"></div>
@@ -144,7 +199,7 @@
       }, { passive: true });
 
       const bridgeReady = request("ui/initialize", {
-        appInfo: { name: "aegis-dashboard", version: "0.1.1" },
+        appInfo: { name: "aegis-dashboard", version: "0.2.0" },
         appCapabilities: {},
         protocolVersion: "2026-01-26",
       }).then(() => notify("ui/notifications/initialized", {}));
@@ -158,9 +213,15 @@
 
       function render() {
         const game = dashboard.game;
-        const player = game.player || {};
-        const world = game.world || {};
-        const location = player.location || {};
+        const player = asRecord(game.player);
+        const world = asRecord(game.world);
+        const location = asRecord(player.location);
+        const inventory = normalizeCollection(game.inventory);
+        const skills = normalizeNamedCollection(player.skills);
+        const equipment = normalizeEquipment(player.equipment);
+        const quests = normalizeCollection(game.quests);
+        const saves = normalizeCollection(dashboard.saves);
+
         $("world-title").textContent = [world.name || game.title, world.genre].filter(Boolean).join("｜");
         $("player-name").textContent = player.name || "未建立角色";
         $("player-role").textContent = [player.race, player.role].filter(Boolean).join("・") || "—";
@@ -170,21 +231,25 @@
         renderStats(player);
         renderObject($("attributes"), player.attributes, "尚無屬性資料");
         renderHistory($("history"), game.recentHistory || []);
-        renderEntities($("inventory"), game.inventory || [], "背包目前是空的", item => ({
-          title: item.name || "未命名物品",
-          badge: item.qty == null ? "" : `× ${item.qty}`,
-          note: [item.category, item.quality, item.note].filter(Boolean).join("・"),
+        renderInventory($("inventory"), inventory);
+        renderEquipment($("equipment"), equipment);
+        renderSkills($("skills"), skills);
+        renderEntities($("quests"), quests, "目前沒有任務", item => ({
+          title: pick(item, ["name", "title", "名稱"]) || "未命名任務",
+          badge: pick(item, ["status", "狀態"]) || "",
+          note: pick(item, ["description", "note", "描述", "資訊"]) || formatObjective(item.objectives),
         }));
-        renderEntities($("quests"), game.quests || [], "目前沒有任務", item => ({
-          title: item.name || item.title || "未命名任務",
-          badge: item.status || "",
-          note: item.description || item.note || formatObjective(item.objectives),
-        }));
-        renderEntities($("saves"), dashboard.saves || [], "尚未建立存檔", item => ({
+        renderEntities($("saves"), saves, "尚未建立存檔", item => ({
           title: item.name || "未命名存檔",
-          badge: `rev ${item.sourceRevision}`,
-          note: `${formatDate(item.createdAt)}｜${item.saveId}`,
+          badge: item.sourceRevision == null ? "" : `rev ${item.sourceRevision}`,
+          note: `${formatDate(item.createdAt)}｜${item.saveId || "—"}`,
         }));
+
+        setCount("inventory-count", inventory.length);
+        setCount("equipment-count", equipment.filter(entry => !entry.empty).length);
+        setCount("skills-count", skills.length);
+        setCount("quests-count", quests.length);
+        setCount("saves-count", saves.length);
         $("status").textContent = `最後更新：${formatDate(game.updatedAt)}`;
       }
 
@@ -198,16 +263,216 @@
         const root = $("stats"); root.replaceChildren();
         for (const [label, value] of stats) {
           const cell = el("div", "stat");
-          cell.append(el("div", "stat-label", label), el("div", "stat-value", String(value)));
+          cell.append(el("div", "stat-label", label), el("div", "stat-value", display(value)));
           root.append(cell);
         }
+      }
+
+      function renderInventory(root, items) {
+        root.replaceChildren();
+        if (!items.length) return root.append(el("div", "empty", "背包目前是空的"));
+        for (const item of items) {
+          const name = pick(item, ["name", "title", "名稱"]) || "未命名物品";
+          const quantity = pick(item, ["qty", "quantity", "count", "數量"]);
+          const description = pick(item, ["description", "info", "lore", "note", "物品資訊", "描述", "說明"]);
+          const effect = pick(item, ["effect", "useEffect", "effects", "效果", "使用效果"]);
+          const source = pick(item, ["source", "origin", "acquiredFrom", "來源", "取得方式"]);
+          const category = pick(item, ["category", "type", "分類", "類型"]);
+          const quality = pick(item, ["quality", "rarity", "grade", "品質", "稀有度"]);
+          const durability = formatPair(
+            pick(item, ["durability", "condition", "耐久度"]),
+            pick(item, ["maxDurability", "最大耐久度"]),
+          );
+          const known = new Set([
+            "id", "name", "title", "名稱", "qty", "quantity", "count", "數量",
+            "description", "info", "lore", "note", "物品資訊", "描述", "說明",
+            "effect", "useEffect", "effects", "效果", "使用效果", "source", "origin", "acquiredFrom", "來源", "取得方式",
+            "category", "type", "分類", "類型", "quality", "rarity", "grade", "品質", "稀有度",
+            "usage", "use", "使用方式", "weight", "重量", "value", "price", "價值", "價格",
+            "durability", "condition", "耐久度", "maxDurability", "最大耐久度", "requirements", "requirement", "使用條件", "需求",
+          ]);
+          root.append(expandable({
+            title: name,
+            badge: present(quantity) ? `× ${display(quantity)}` : "數量未記錄",
+            note: [category, quality, description].filter(present).map(display).join("・") || "點擊查看物品資料",
+            fields: [
+              field("數量", quantity, true),
+              field("類型", category),
+              field("品質／稀有度", quality),
+              field("使用效果", effect, true, true),
+              field("使用方式", pick(item, ["usage", "use", "使用方式"]), false, true),
+              field("來源", source, true, true),
+              field("物品資訊", description, true, true),
+              field("重量", pick(item, ["weight", "重量"])),
+              field("價值", pick(item, ["value", "price", "價值", "價格"])),
+              field("耐久度", durability),
+              field("使用條件", pick(item, ["requirements", "requirement", "使用條件", "需求"]), false, true),
+            ],
+            extras: extraFields(item, known),
+          }));
+        }
+      }
+
+      function renderSkills(root, skills) {
+        root.replaceChildren();
+        if (!skills.length) return root.append(el("div", "empty", "目前沒有已記錄技能"));
+        for (const skill of skills) {
+          const name = pick(skill, ["name", "title", "名稱"]) || "未命名技能";
+          const level = pick(skill, ["level", "rank", "tier", "等級", "階級"]);
+          const description = pick(skill, ["description", "info", "note", "技能資訊", "描述", "說明"]);
+          const effect = pick(skill, ["effect", "effects", "效果", "技能效果"]);
+          const source = pick(skill, ["source", "origin", "learnedFrom", "來源", "習得方式"]);
+          const known = new Set([
+            "id", "name", "title", "名稱", "level", "rank", "tier", "等級", "階級",
+            "description", "info", "note", "技能資訊", "描述", "說明", "effect", "effects", "效果", "技能效果",
+            "source", "origin", "learnedFrom", "來源", "習得方式", "type", "category", "類型", "分類",
+            "cost", "manaCost", "mpCost", "staminaCost", "消耗", "cooldown", "冷卻", "冷卻時間",
+            "proficiency", "experience", "exp", "熟練度", "requirements", "requirement", "使用條件", "需求",
+          ]);
+          root.append(expandable({
+            title: name,
+            badge: present(level) ? `Lv. ${display(level)}` : "等級未記錄",
+            note: description ? display(description) : "點擊查看技能資料",
+            fields: [
+              field("等級／階級", level, true),
+              field("類型", pick(skill, ["type", "category", "類型", "分類"])),
+              field("技能效果", effect, true, true),
+              field("技能資訊", description, true, true),
+              field("消耗", pick(skill, ["cost", "manaCost", "mpCost", "staminaCost", "消耗"])),
+              field("冷卻時間", pick(skill, ["cooldown", "冷卻", "冷卻時間"])),
+              field("熟練度", pick(skill, ["proficiency", "experience", "exp", "熟練度"])),
+              field("來源／習得方式", source, true, true),
+              field("使用條件", pick(skill, ["requirements", "requirement", "使用條件", "需求"]), false, true),
+            ],
+            extras: extraFields(skill, known),
+          }));
+        }
+      }
+
+      function renderEquipment(root, entries) {
+        root.replaceChildren();
+        if (!entries.length) return root.append(el("div", "empty", "目前沒有裝備欄位資料"));
+        for (const entry of entries) {
+          const item = entry.item;
+          const name = entry.empty ? "未裝備" : pick(item, ["name", "title", "名稱"]) || "未命名裝備";
+          const description = pick(item, ["description", "info", "lore", "note", "裝備資訊", "描述", "說明"]);
+          const effect = pick(item, ["effect", "effects", "bonus", "bonuses", "效果", "裝備效果", "加成"]);
+          const source = pick(item, ["source", "origin", "acquiredFrom", "來源", "取得方式"]);
+          const durability = formatPair(
+            pick(item, ["durability", "condition", "耐久度"]),
+            pick(item, ["maxDurability", "最大耐久度"]),
+          );
+          const known = new Set([
+            "id", "name", "title", "名稱", "slot", "部位", "description", "info", "lore", "note", "裝備資訊", "描述", "說明",
+            "effect", "effects", "bonus", "bonuses", "效果", "裝備效果", "加成", "source", "origin", "acquiredFrom", "來源", "取得方式",
+            "type", "category", "類型", "分類", "quality", "rarity", "grade", "品質", "稀有度",
+            "attack", "damage", "攻擊", "攻擊力", "defense", "armor", "防禦", "防禦力",
+            "durability", "condition", "耐久度", "maxDurability", "最大耐久度", "requirements", "requirement", "裝備條件", "需求",
+          ]);
+          root.append(expandable({
+            title: name,
+            badge: entry.slotLabel,
+            note: entry.empty ? "此部位目前空置" : description ? display(description) : "點擊查看裝備資料",
+            fields: [
+              field("裝備部位", entry.slotLabel, true),
+              field("裝備名稱", entry.empty ? undefined : name, true),
+              field("類型", pick(item, ["type", "category", "類型", "分類"])),
+              field("品質／稀有度", pick(item, ["quality", "rarity", "grade", "品質", "稀有度"])),
+              field("攻擊力", pick(item, ["attack", "damage", "攻擊", "攻擊力"])),
+              field("防禦力", pick(item, ["defense", "armor", "防禦", "防禦力"])),
+              field("裝備效果", effect, true, true),
+              field("耐久度", durability),
+              field("來源", source, true, true),
+              field("裝備資訊", description, true, true),
+              field("裝備條件", pick(item, ["requirements", "requirement", "裝備條件", "需求"]), false, true),
+            ],
+            extras: extraFields(item, known),
+          }));
+        }
+      }
+
+      function expandable({ title, badge, note, fields, extras }) {
+        const details = el("details", "entity");
+        const summary = el("summary", "entity-summary");
+        summary.setAttribute("aria-label", `${title}，點擊查看詳細資料`);
+        const heading = el("div", "entity-heading");
+        heading.append(el("div", "entity-title", title));
+        if (note) heading.append(el("div", "entity-preview", note));
+        const meta = el("div", "entity-meta");
+        if (badge) meta.append(el("span", "entity-badge", badge));
+        meta.append(el("span", "chevron", "⌄"));
+        summary.append(heading, meta);
+
+        const body = el("div", "entity-body");
+        const grid = el("div", "detail-grid");
+        for (const item of fields) {
+          if (!item || (!item.always && !present(item.value))) continue;
+          const box = el("div", `detail${item.wide ? " wide" : ""}`);
+          const value = present(item.value) ? display(item.value) : "尚未記錄";
+          box.append(el("div", "detail-label", item.label), el("div", `detail-value${present(item.value) ? "" : " missing"}`, value));
+          grid.append(box);
+        }
+        body.append(grid);
+        if (extras.length) {
+          body.append(el("div", "extra-title", "其他資料"));
+          const extraGrid = el("div", "detail-grid");
+          for (const [key, value] of extras) {
+            const box = el("div", "detail");
+            box.append(el("div", "detail-label", humanizeKey(key)), el("div", "detail-value", display(value)));
+            extraGrid.append(box);
+          }
+          body.append(extraGrid);
+        }
+        details.append(summary, body);
+        return details;
+      }
+
+      function field(label, value, always = false, wide = false) { return { label, value, always, wide }; }
+
+      function extraFields(record, known) {
+        return Object.entries(asRecord(record))
+          .filter(([key, value]) => !known.has(key) && !key.startsWith("_") && present(value))
+          .sort(([a], [b]) => a.localeCompare(b, "zh-Hant"));
+      }
+
+      function normalizeCollection(value) {
+        if (!Array.isArray(value)) return [];
+        return value.map(item => typeof item === "object" && item !== null && !Array.isArray(item) ? item : { name: display(item) });
+      }
+
+      function normalizeNamedCollection(value) {
+        if (Array.isArray(value)) return normalizeCollection(value);
+        if (!value || typeof value !== "object") return [];
+        return Object.entries(value).map(([name, raw]) => {
+          if (raw && typeof raw === "object" && !Array.isArray(raw)) return { name, ...raw };
+          return { name, level: raw };
+        });
+      }
+
+      function normalizeEquipment(value) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        return Object.entries(value).map(([slot, raw]) => {
+          const empty = raw == null || raw === "" || raw === "無" || raw === "未裝備";
+          const item = empty ? {} : typeof raw === "object" && !Array.isArray(raw) ? raw : { name: raw };
+          return { slot, slotLabel: equipmentSlotLabel(slot), item, empty };
+        });
+      }
+
+      function equipmentSlotLabel(slot) {
+        const labels = {
+          mainHand: "主手", main_hand: "主手", weapon: "主手", offHand: "副手", off_hand: "副手",
+          head: "頭部", helmet: "頭部", body: "身體", chest: "身體", armor: "身體",
+          hands: "手部", gloves: "手部", legs: "腿部", pants: "腿部", feet: "足部", boots: "足部",
+          accessory: "飾品", accessories: "飾品", ring: "戒指", necklace: "項鍊", cloak: "披風",
+        };
+        return labels[slot] || humanizeKey(slot);
       }
 
       function renderObject(root, object, emptyText) {
         root.replaceChildren();
         const entries = object && typeof object === "object" ? Object.entries(object) : [];
         if (!entries.length) return root.append(el("div", "empty", emptyText));
-        for (const [key, value] of entries) root.append(row(key, "", display(value)));
+        for (const [key, value] of entries) root.append(row(humanizeKey(key), "", display(value)));
       }
 
       function renderHistory(root, items) {
@@ -219,7 +484,7 @@
       function renderEntities(root, items, emptyText, map) {
         root.replaceChildren();
         if (!items.length) return root.append(el("div", "empty", emptyText));
-        items.forEach(item => { const view = map(item || {}); root.append(row(view.title, view.badge, view.note)); });
+        items.forEach(item => { const view = map(asRecord(item)); root.append(row(view.title, view.badge, view.note)); });
       }
 
       function row(title, badge, note) {
@@ -227,7 +492,7 @@
         const head = el("div", "row-head");
         head.append(el("div", "row-title", String(title || "—")), el("div", "pill", String(badge || "")));
         outer.append(head);
-        if (note) outer.append(el("div", "note", String(note)));
+        if (note) outer.append(el("div", "note", display(note)));
         return outer;
       }
 
@@ -238,11 +503,46 @@
         return node;
       }
 
+      function asRecord(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
+
+      function pick(record, keys) {
+        const object = asRecord(record);
+        for (const key of keys) if (Object.prototype.hasOwnProperty.call(object, key) && present(object[key])) return object[key];
+        return undefined;
+      }
+
+      function present(value) { return value !== undefined && value !== null && value !== ""; }
+
       function display(value) {
-        if (value == null || value === "") return "—";
-        if (typeof value === "object") return JSON.stringify(value);
+        if (!present(value)) return "—";
+        if (typeof value === "boolean") return value ? "是" : "否";
+        if (Array.isArray(value)) return value.length ? value.map(display).join("、") : "—";
+        if (typeof value === "object") {
+          const entries = Object.entries(value);
+          return entries.length ? entries.map(([key, child]) => `${humanizeKey(key)}：${display(child)}`).join("\n") : "—";
+        }
         return String(value);
       }
+
+      function formatPair(current, maximum) {
+        if (!present(current) && !present(maximum)) return undefined;
+        if (present(current) && present(maximum)) return `${display(current)} / ${display(maximum)}`;
+        return present(current) ? display(current) : `最大 ${display(maximum)}`;
+      }
+
+      function humanizeKey(key) {
+        const labels = {
+          id: "識別碼", name: "名稱", title: "名稱", qty: "數量", quantity: "數量", count: "數量",
+          category: "分類", type: "類型", quality: "品質", rarity: "稀有度", description: "說明", info: "資訊",
+          note: "備註", effect: "效果", effects: "效果", source: "來源", origin: "來源", value: "價值", price: "價格",
+          weight: "重量", level: "等級", rank: "階級", cooldown: "冷卻時間", cost: "消耗", proficiency: "熟練度",
+          attack: "攻擊力", damage: "傷害", defense: "防禦力", armor: "護甲", durability: "耐久度", maxDurability: "最大耐久度",
+        };
+        if (labels[key]) return labels[key];
+        return String(key).replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+      }
+
+      function setCount(id, value) { $(id).textContent = String(value); }
       function formatObjective(value) { return Array.isArray(value) ? value.map(display).join("、") : ""; }
       function formatDate(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? String(value || "—") : date.toLocaleString("zh-TW"); }
 
