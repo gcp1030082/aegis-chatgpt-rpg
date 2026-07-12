@@ -26,7 +26,7 @@ const resultOutputSchema = { result: z.record(z.unknown()) };
 
 export function createAegisMcpServer(service: AegisService, widgetHtml: string): McpServer {
   const server = new McpServer(
-    { name: "aegis-rpg", version: "0.1.0" },
+    { name: "aegis-rpg", version: "0.1.1" },
     {
       instructions:
         "AEGIS State 是遊戲世界的唯一權威。每個遊戲回合先呼叫 aegis_prepare_turn，再依回傳狀態與規則判定結果；若持久狀態改變，必須在敘述成既成事實前成功呼叫 aegis_apply_state_diff。寫入衝突時重新 prepare。不得自行虛構背包、金錢、能力、NPC 狀態或世界事實。玩家可見內容使用繁體中文，不顯示內部 Diff、Revision、驗證或 Transaction。介面查詢不推進時間。",

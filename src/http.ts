@@ -2,12 +2,10 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { AppConfig } from "./config.js";
+import { mcpEndpointPath, type AppConfig } from "./config.js";
 import { createAegisMcpServer } from "./mcp/server.js";
 import type { AegisService } from "./service.js";
 import type { GameStore } from "./storage/store.js";
-
-const MCP_PATH = "/mcp";
 
 export async function startHttpServer(
   config: AppConfig,
@@ -15,6 +13,7 @@ export async function startHttpServer(
   store: GameStore,
 ) {
   const widgetHtml = await readFile(join(config.publicDir, "aegis-widget.html"), "utf8");
+  const mcpPath = mcpEndpointPath(config);
 
   const server = createServer(async (req, res) => {
     if (!req.url) return sendText(res, 400, "Missing URL");
@@ -22,10 +21,10 @@ export async function startHttpServer(
 
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/healthz")) {
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: true, service: "aegis-rpg", version: "0.1.0" }));
+      res.end(JSON.stringify({ ok: true, service: "aegis-rpg", version: "0.1.1" }));
       return;
     }
-    if (req.method === "GET" && url.pathname === "/admin") {
+    if (config.enableLegacyAdmin && req.method === "GET" && url.pathname === "/admin") {
       try {
         const html = await readFile(join(config.legacyDir, "aegis_companion_v6_7_7.html"), "utf8");
         res.writeHead(200, securityHeaders("text/html; charset=utf-8"));
@@ -35,11 +34,12 @@ export async function startHttpServer(
       }
       return;
     }
-    if (req.method === "OPTIONS" && url.pathname.startsWith(MCP_PATH)) {
+    if (req.method === "OPTIONS" && url.pathname === mcpPath) {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version",
+        "Access-Control-Allow-Headers":
+          "accept, authorization, content-type, last-event-id, mcp-session-id, mcp-protocol-version",
         "Access-Control-Expose-Headers": "Mcp-Session-Id",
       });
       res.end();
@@ -47,7 +47,7 @@ export async function startHttpServer(
     }
 
     const mcpMethods = new Set(["POST", "GET", "DELETE"]);
-    if (url.pathname === MCP_PATH && req.method && mcpMethods.has(req.method)) {
+    if (url.pathname === mcpPath && req.method && mcpMethods.has(req.method)) {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
       const mcpServer = createAegisMcpServer(service, widgetHtml);
@@ -73,7 +73,8 @@ export async function startHttpServer(
   });
 
   await new Promise<void>((resolve) => server.listen(config.port, "0.0.0.0", resolve));
-  console.log(`AEGIS MCP server listening on http://0.0.0.0:${config.port}${MCP_PATH}`);
+  const displayedPath = config.mcpPathSecret ? "/mcp/[redacted]" : mcpPath;
+  console.log(`AEGIS MCP server listening on http://0.0.0.0:${config.port}${displayedPath}`);
 
   const shutdown = async () => {
     server.close();
@@ -87,6 +88,7 @@ export async function startHttpServer(
 function securityHeaders(contentType: string) {
   return {
     "content-type": contentType,
+    "cache-control": "no-store",
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "x-frame-options": "SAMEORIGIN",
