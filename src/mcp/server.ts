@@ -9,7 +9,7 @@ import { asAegisError } from "../domain/errors.js";
 import { toGameView } from "../domain/default-state.js";
 import type { AegisService } from "../service.js";
 
-const WIDGET_URI = "ui://widget/aegis-dashboard-v1.html";
+const WIDGET_URI = "ui://widget/aegis-dashboard-v2.html";
 const gameIdSchema = z
   .string()
   .min(1)
@@ -26,10 +26,10 @@ const resultOutputSchema = { result: z.record(z.unknown()) };
 
 export function createAegisMcpServer(service: AegisService, widgetHtml: string): McpServer {
   const server = new McpServer(
-    { name: "aegis-rpg", version: "0.1.1" },
+    { name: "aegis-rpg", version: "0.2.0" },
     {
       instructions:
-        "AEGIS State 是遊戲世界的唯一權威。每個遊戲回合先呼叫 aegis_prepare_turn，再依回傳狀態與規則判定結果；若持久狀態改變，必須在敘述成既成事實前成功呼叫 aegis_apply_state_diff。寫入衝突時重新 prepare。不得自行虛構背包、金錢、能力、NPC 狀態或世界事實。玩家可見內容使用繁體中文，不顯示內部 Diff、Revision、驗證或 Transaction。介面查詢不推進時間。",
+        "AEGIS State 是遊戲世界的唯一權威。每個遊戲回合先呼叫 aegis_prepare_turn，再依回傳狀態與規則判定結果；若持久狀態改變，必須在敘述成既成事實前成功呼叫 aegis_apply_state_diff。寫入衝突時重新 prepare。不得自行虛構背包、金錢、能力、NPC 狀態或世界事實。新增或更新物品時應保存穩定 id、name、quantity、category、quality、description、effect、source 等已知資料；技能應保存 id、name、level、type、description、effect、cost、cooldown、source；裝備應放在 player.equipment 的對應部位，並以物件保存相同的詳細資料。未知欄位保持空缺，不得猜測。玩家可見內容使用繁體中文，不顯示內部 Diff、Revision、驗證或 Transaction。介面查詢不推進時間。",
     },
   );
 
@@ -109,7 +109,9 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
         game_id: gameIdSchema,
         expected_revision: z.number().int().nonnegative().describe("aegis_prepare_turn 回傳的 revision。"),
         idempotency_key: idempotencySchema,
-        diff: z.record(z.unknown()).describe("只含 world、player、inventory、npcs、compendium、map、quests、history 的差異。"),
+        diff: z.record(z.unknown()).describe(
+          "只含 world、player、inventory、npcs、compendium、map、quests、history 的差異。物品請盡量保存 id/name/quantity/category/quality/description/effect/source；技能與裝備也要保存等級、效果、來源等已知詳情，未知資料不可虛構。",
+        ),
         turn_summary: z.string().max(500).optional().describe("本回合狀態變化的簡短摘要。"),
       },
       outputSchema: resultOutputSchema,
@@ -201,7 +203,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_show_dashboard",
     {
       title: "顯示 AEGIS 儀表板",
-      description: "Use this when the user wants a compact visual summary of the current character, world, inventory, quests, and saves.",
+      description: "Use this when the user wants an interactive visual summary of the current character, inventory item details, equipment, skills, quests, and saves.",
       inputSchema: { game_id: gameIdSchema },
       outputSchema: resultOutputSchema,
       annotations: impact(true, false, false, true),
