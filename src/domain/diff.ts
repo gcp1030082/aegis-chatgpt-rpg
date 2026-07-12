@@ -93,14 +93,14 @@ function applyInventoryPatch(
 ): JsonObject[] {
   if (Array.isArray(patch)) {
     changed.add("inventory");
-    return objectsOnly(patch, "inventory");
+    return normalizeInventory(objectsOnly(patch, "inventory"), "inventory");
   }
   if (!isObject(patch)) throw invalidSection("inventory", "陣列或物件");
 
   let result = cloneState(current);
   if (patch.replace !== undefined) {
     if (!Array.isArray(patch.replace)) throw invalidSection("inventory.replace", "陣列");
-    result = objectsOnly(patch.replace, "inventory.replace");
+    result = normalizeInventory(objectsOnly(patch.replace, "inventory.replace"), "inventory.replace");
     changed.add("inventory");
   }
   if (patch.upsert !== undefined) {
@@ -112,15 +112,17 @@ function applyInventoryPatch(
     for (const raw of patch.add) {
       if (!isObject(raw)) throw invalidSection("inventory.add[]", "物件");
       const item = cloneState(raw);
-      const qty = numericQty(item.qty, 1, "inventory.add[].qty");
+      const quantity = inventoryQuantity(item, 1, "inventory.add[].quantity");
       const index = findEntityIndex(result, item);
       if (index >= 0) {
         const existing = result[index];
         if (!existing) continue;
-        existing.qty = numericQty(existing.qty, 0, "inventory.qty") + qty;
-        mergeObject(existing, withoutKey(item, "qty"), `inventory[${index}]`, changed);
+        existing.quantity = inventoryQuantity(existing, 1, `inventory[${index}].quantity`) + quantity;
+        delete existing.qty;
+        mergeObject(existing, withoutQuantity(item), `inventory[${index}]`, changed);
       } else {
-        item.qty = qty;
+        item.quantity = quantity;
+        delete item.qty;
         result.push(item);
       }
       changed.add("inventory");
@@ -134,20 +136,25 @@ function applyInventoryPatch(
       if (index < 0) continue;
       const existing = result[index];
       if (!existing) continue;
-      if (raw.qty === undefined) {
+      if (!hasInventoryQuantity(raw)) {
         result.splice(index, 1);
       } else {
-        const remaining = numericQty(existing.qty, 0, "inventory.qty") - numericQty(raw.qty, 0, "inventory.remove[].qty");
+        const remaining =
+          inventoryQuantity(existing, 1, `inventory[${index}].quantity`) -
+          inventoryQuantity(raw, 0, "inventory.remove[].quantity");
         if (remaining < 0) {
           throw new AegisError("INVALID_DIFF", `移除的 ${String(raw.name ?? "物品")} 數量超過持有量。`);
         }
         if (remaining === 0) result.splice(index, 1);
-        else existing.qty = remaining;
+        else {
+          existing.quantity = remaining;
+          delete existing.qty;
+        }
       }
       changed.add("inventory");
     }
   }
-  return result.filter((item) => item.qty !== 0);
+  return normalizeInventory(result, "inventory").filter((item) => item.quantity !== 0);
 }
 
 function applyCollectionPatch(
@@ -287,7 +294,7 @@ function objectsOnly(values: JsonValue[], path: string): JsonObject[] {
 }
 
 function numericQty(value: JsonValue | undefined, fallback: number, path: string): number {
-  if (value === undefined || value === "") return fallback;
+  if (value === undefined || value === null || value === "") return fallback;
   const number = Number(value);
   if (!Number.isFinite(number) || number < 0) {
     throw new AegisError("INVALID_DIFF", `${path} 必須是非負數。`);
@@ -295,9 +302,41 @@ function numericQty(value: JsonValue | undefined, fallback: number, path: string
   return number;
 }
 
-function withoutKey(object: JsonObject, key: string): JsonObject {
+function hasInventoryQuantity(item: JsonObject): boolean {
+  return quantityProvided(item.quantity) || quantityProvided(item.qty);
+}
+
+function inventoryQuantity(item: JsonObject, fallback: number, path: string): number {
+  const longValue = item.quantity;
+  const shortValue = item.qty;
+  if (quantityProvided(longValue) && quantityProvided(shortValue)) {
+    const longQuantity = numericQty(longValue, fallback, path);
+    const shortQuantity = numericQty(shortValue, fallback, path.replace("quantity", "qty"));
+    if (longQuantity !== shortQuantity) {
+      throw new AegisError("INVALID_DIFF", `${path} 與 qty 不可互相矛盾。`);
+    }
+    return longQuantity;
+  }
+  return numericQty(quantityProvided(longValue) ? longValue : shortValue, fallback, path);
+}
+
+function quantityProvided(value: JsonValue | undefined): boolean {
+  return value !== undefined && value !== null && value !== "";
+}
+
+function normalizeInventory(items: JsonObject[], path: string): JsonObject[] {
+  return items.map((raw, index) => {
+    const item = cloneState(raw);
+    item.quantity = inventoryQuantity(item, 1, `${path}[${index}].quantity`);
+    delete item.qty;
+    return item;
+  });
+}
+
+function withoutQuantity(object: JsonObject): JsonObject {
   const result = cloneState(object);
-  delete result[key];
+  delete result.quantity;
+  delete result.qty;
   return result;
 }
 
