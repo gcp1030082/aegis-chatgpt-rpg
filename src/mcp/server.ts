@@ -10,6 +10,7 @@ import { toGameView } from "../domain/default-state.js";
 import type { AegisService } from "../service.js";
 
 const WIDGET_URI = "ui://widget/aegis-dashboard-v2.html";
+const LEGACY_WIDGET_URI = "ui://widget/aegis-dashboard-v1.html";
 const gameIdSchema = z
   .string()
   .min(1)
@@ -33,10 +34,10 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     },
   );
 
-  registerAppResource(server, "aegis-dashboard", WIDGET_URI, {}, async () => ({
+  const dashboardResource = (uri: string) => ({
     contents: [
       {
-        uri: WIDGET_URI,
+        uri,
         mimeType: RESOURCE_MIME_TYPE,
         text: widgetHtml,
         _meta: {
@@ -47,7 +48,18 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
         },
       },
     ],
-  }));
+  });
+
+  registerAppResource(server, "aegis-dashboard", WIDGET_URI, {}, async () =>
+    dashboardResource(WIDGET_URI),
+  );
+  registerAppResource(
+    server,
+    "aegis-dashboard-v1-compat",
+    LEGACY_WIDGET_URI,
+    {},
+    async () => dashboardResource(LEGACY_WIDGET_URI),
+  );
 
   server.registerTool(
     "aegis_create_game",
