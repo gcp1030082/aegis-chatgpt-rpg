@@ -55,7 +55,11 @@ describe("production HTTP surface", () => {
     expect(health.status).toBe(200);
     expect(await health.json()).toMatchObject({ ok: true, version: "0.1.1" });
 
-    const options = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
+    const healthWithTrailingSlash = await fetch(`${origin}/healthz/`);
+    expect(healthWithTrailingSlash.status).toBe(200);
+    expect(await healthWithTrailingSlash.json()).toMatchObject({ ok: true });
+
+    const options = await fetch(`${origin}/mcp/aegis_http_secret_123456/`, {
       method: "OPTIONS",
     });
     expect(options.status).toBe(204);
