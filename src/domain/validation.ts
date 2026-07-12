@@ -69,9 +69,18 @@ export function validateGameState(state: GameState, maxBytes: number): void {
   }
 
   state.inventory.forEach((item, index) => {
-    const qty = item.qty;
-    if (typeof qty === "number" && (!Number.isFinite(qty) || qty < 0)) {
-      throw new AegisError("INVALID_STATE", `inventory[${index}].qty 不得小於 0。`);
+    for (const key of ["quantity", "qty"] as const) {
+      const quantity = item[key];
+      if (typeof quantity === "number" && (!Number.isFinite(quantity) || quantity < 0)) {
+        throw new AegisError("INVALID_STATE", `inventory[${index}].${key} 不得小於 0。`);
+      }
+    }
+    if (
+      typeof item.quantity === "number" &&
+      typeof item.qty === "number" &&
+      item.quantity !== item.qty
+    ) {
+      throw new AegisError("INVALID_STATE", `inventory[${index}] 的 quantity 與 qty 不可互相矛盾。`);
     }
   });
 
