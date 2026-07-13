@@ -1,8 +1,10 @@
 import { cloneState } from "./default-state.js";
 import { AegisError } from "./errors.js";
-import { normalizeItemCategory } from "./inventory.js";
+import { categorizeItem, normalizeInventoryRecords } from "./inventory.js";
 import type { ApplyDiffResult, GameState, JsonObject, JsonValue } from "./types.js";
 import { assertSafeJson, isObject, validateGameState } from "./validation.js";
+import { recordAutomaticSave } from "./commit.js";
+import { normalizeSkills } from "./skills.js";
 
 const ALLOWED_TOP_LEVEL = new Set([
   "world",
@@ -39,6 +41,8 @@ export function applyStateDiff(
 
   const next = cloneState(current);
   const changedPaths = new Set<string>();
+  const initializingPlayer = current.player.initialized !== true &&
+    isObject(rawDiff.player) && rawDiff.player.initialized === true;
 
   if (rawDiff.world !== undefined) {
     if (!isObject(rawDiff.world)) throw invalidSection("world", "物件");
@@ -49,7 +53,12 @@ export function applyStateDiff(
     applyPlayerPatch(next, rawDiff.player, changedPaths);
   }
   if (rawDiff.inventory !== undefined) {
-    next.inventory = applyInventoryPatch(next.inventory, rawDiff.inventory, changedPaths);
+    next.inventory = applyInventoryPatch(
+      next.inventory,
+      rawDiff.inventory,
+      changedPaths,
+      options.idempotencyKey,
+    );
   }
 
   for (const key of ["npcs", "compendium", "map", "quests"] as const) {
@@ -62,6 +71,8 @@ export function applyStateDiff(
     applyHistoryPatch(next, rawDiff.history, changedPaths);
   }
 
+  ensureAcquisitionRecords(current, next, initializingPlayer, changedPaths);
+
   if (changedPaths.size === 0) {
     throw new AegisError("NO_STATE_CHANGE", "提交內容沒有造成任何狀態變更。", {
       changedPaths: [],
@@ -70,7 +81,7 @@ export function applyStateDiff(
 
   next.revision = current.revision + 1;
   next.updatedAt = new Date().toISOString();
-  appendTransaction(next, options.idempotencyKey, options.turnSummary, [...changedPaths]);
+  recordAutomaticSave(next, options.idempotencyKey, options.turnSummary, [...changedPaths]);
   trimHistory(next);
   validateGameState(next, options.maxStateBytes);
 
@@ -79,23 +90,22 @@ export function applyStateDiff(
 
 function applyPlayerPatch(state: GameState, patch: JsonObject, changed: Set<string>): void {
   const rest = cloneState(patch);
+  for (const key of ["equipment", "equippedItems", "activeEquipmentModifiers"] as const) {
+    if (rest[key] !== undefined) {
+      throw new AegisError(
+        "INVALID_DIFF",
+        `player.${key} 只能透過 aegis_equip_item 或 aegis_unequip_item 修改。`,
+      );
+    }
+  }
   if (rest.skills !== undefined) {
     if (!Array.isArray(rest.skills)) throw invalidSection("player.skills", "陣列");
-    const skills = objectsOnly(rest.skills, "player.skills");
+    const skills = normalizeSkills(objectsOnly(rest.skills, "player.skills"), true);
     if (!sameJson(state.player.skills, skills)) {
       state.player.skills = skills;
       changed.add("player.skills");
     }
     delete rest.skills;
-  }
-  if (rest.equipment !== undefined && !isObject(rest.equipment)) {
-    throw invalidSection("player.equipment", "物件");
-  }
-  if (isObject(rest.equipment)) {
-    const currentEquipment = isObject(state.player.equipment) ? state.player.equipment : {};
-    mergeObject(currentEquipment, rest.equipment, "player.equipment", changed);
-    state.player.equipment = currentEquipment;
-    delete rest.equipment;
   }
   mergeObject(state.player, rest, "player", changed);
 }
@@ -104,9 +114,10 @@ function applyInventoryPatch(
   current: JsonObject[],
   patch: JsonValue,
   changed: Set<string>,
+  seed: string,
 ): JsonObject[] {
   if (Array.isArray(patch)) {
-    const replacement = normalizeInventory(objectsOnly(patch, "inventory"), "inventory", true);
+    const replacement = normalizeInventory(objectsOnly(patch, "inventory"), "inventory", true, seed);
     if (sameJson(current, replacement)) return cloneState(current);
     changed.add("inventory");
     return replacement;
@@ -120,6 +131,7 @@ function applyInventoryPatch(
       objectsOnly(patch.replace, "inventory.replace"),
       "inventory.replace",
       true,
+      seed,
     );
     if (!sameJson(result, replacement)) {
       result = replacement;
@@ -136,7 +148,11 @@ function applyInventoryPatch(
       if (!isObject(raw)) throw invalidSection("inventory.add[]", "物件");
       const item = cloneState(raw);
       const quantity = inventoryQuantity(item, 1, "inventory.add[].quantity");
-      const index = findEntityIndex(result, item);
+      const equipmentWithoutInstance = item.instanceId === undefined && (
+        normalizeCategoryForAdd(item) === "equipment" || item.equippable === true ||
+        item.slot !== undefined || item.equipmentSlot !== undefined || item.equipmentSlots !== undefined
+      );
+      const index = equipmentWithoutInstance ? -1 : findEntityIndex(result, item);
       if (index >= 0) {
         const existing = result[index];
         if (!existing) continue;
@@ -177,7 +193,7 @@ function applyInventoryPatch(
       changed.add("inventory");
     }
   }
-  return normalizeInventory(result, "inventory", true).filter((item) => item.quantity !== 0);
+  return normalizeInventory(result, "inventory", true, seed).filter((item) => item.quantity !== 0);
 }
 
 function applyCollectionPatch(
@@ -275,6 +291,7 @@ function findEntityIndex(items: JsonObject[], candidate: JsonObject): number {
 function entityKey(value: JsonValue): string {
   if (typeof value === "string" || typeof value === "number") return String(value);
   if (!isObject(value)) return "";
+  if (value.instanceId !== undefined && value.instanceId !== "") return `instance:${String(value.instanceId)}`;
   if (value.id !== undefined && value.id !== "") return `id:${String(value.id)}`;
   if (value.name !== undefined && value.name !== "") {
     const quality = value.quality === undefined ? "" : `:${String(value.quality)}`;
@@ -295,27 +312,6 @@ function mergeObject(target: JsonObject, patch: JsonObject, path: string, change
       changed.add(childPath);
     }
   }
-}
-
-function appendTransaction(
-  state: GameState,
-  idempotencyKey: string,
-  summary: string | undefined,
-  changedPaths: string[],
-): void {
-  const keys = Array.isArray(state.engine.idempotencyKeys) ? state.engine.idempotencyKeys : [];
-  keys.push(idempotencyKey);
-  state.engine.idempotencyKeys = keys.slice(-100);
-
-  const log = Array.isArray(state.engine.transactionLog) ? state.engine.transactionLog : [];
-  log.push({
-    idempotencyKey,
-    revision: state.revision,
-    time: state.updatedAt,
-    summary: summary ?? "",
-    changedPaths,
-  });
-  state.engine.transactionLog = log.slice(-100);
 }
 
 function trimHistory(state: GameState): void {
@@ -364,17 +360,68 @@ function quantityProvided(value: JsonValue | undefined): boolean {
   return value !== undefined && value !== null && value !== "";
 }
 
-function normalizeInventory(items: JsonObject[], path: string, strictCategory = false): JsonObject[] {
-  return items.map((raw, index) => {
+function normalizeInventory(
+  items: JsonObject[],
+  path: string,
+  strictCategory = false,
+  seed = path,
+): JsonObject[] {
+  const normalized = items.map((raw, index) => {
     const item = cloneState(raw);
     item.quantity = inventoryQuantity(item, 1, `${path}[${index}].quantity`);
     delete item.qty;
-    return normalizeItemCategory(item, strictCategory);
+    return item;
   });
+  return normalizeInventoryRecords(normalized, seed, strictCategory);
 }
 
 function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function ensureAcquisitionRecords(
+  current: GameState,
+  next: GameState,
+  initializingPlayer: boolean,
+  changed: Set<string>,
+): void {
+  for (const item of next.inventory) {
+    const existed = current.inventory.some((candidate) => samePersistentEntity(candidate, item));
+    if (existed || isObject(item.acquisition)) continue;
+    if (!initializingPlayer) {
+      throw new AegisError(
+        "INVALID_DIFF",
+        `新物品 ${String(item.name ?? item.id ?? item.instanceId ?? "未命名物品")} 必須記錄 acquisition 取得來源。`,
+      );
+    }
+    item.acquisition = { type: "initial_item", sourceName: "角色創建", obtainedAtTick: 0 };
+    changed.add("inventory");
+  }
+
+  const currentSkills = Array.isArray(current.player.skills)
+    ? current.player.skills.filter(isObject)
+    : [];
+  const nextSkills = Array.isArray(next.player.skills)
+    ? next.player.skills.filter(isObject)
+    : [];
+  for (const skill of nextSkills) {
+    const existed = currentSkills.some((candidate) => samePersistentEntity(candidate, skill));
+    if (existed || isObject(skill.acquisition)) continue;
+    if (!initializingPlayer) {
+      throw new AegisError(
+        "INVALID_DIFF",
+        `新技能 ${String(skill.name ?? skill.id ?? "未命名技能")} 必須記錄 acquisition 取得來源。`,
+      );
+    }
+    skill.acquisition = { type: "initial_skill", sourceName: "角色創建" };
+    changed.add("player.skills");
+  }
+}
+
+function samePersistentEntity(left: JsonObject, right: JsonObject): boolean {
+  if (left.instanceId && right.instanceId) return left.instanceId === right.instanceId;
+  if (left.id && right.id) return left.id === right.id;
+  return Boolean(left.name && right.name && left.name === right.name && left.quality === right.quality);
 }
 
 function withoutQuantity(object: JsonObject): JsonObject {
@@ -382,6 +429,10 @@ function withoutQuantity(object: JsonObject): JsonObject {
   delete result.quantity;
   delete result.qty;
   return result;
+}
+
+function normalizeCategoryForAdd(item: JsonObject): string {
+  return categorizeItem(item, true);
 }
 
 function invalidSection(path: string, expected: string): AegisError {

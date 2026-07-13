@@ -25,7 +25,7 @@ describe("AegisService", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  it("creates, commits, retries idempotently, saves, and restores", async () => {
+  it("creates, commits, retries idempotently, and keeps developer recovery snapshots internal", async () => {
     await service.createGame("main", "測試世界");
     const first = await service.applyDiff(
       "main",
@@ -35,6 +35,7 @@ describe("AegisService", () => {
       "角色甦醒",
     );
     expect(first.game.revision).toBe(1);
+    expect(first.game.engine.autoSave).toMatchObject({ status: "saved", revision: 1 });
 
     const replay = await service.applyDiff("main", 0, "turn-1", { player: { money: 999 } });
     expect(replay.idempotentReplay).toBe(true);
@@ -60,15 +61,21 @@ describe("AegisService", () => {
     ).rejects.toMatchObject({ code: "REVISION_CONFLICT" });
   });
 
-  it("atomically resets player-owned data while preserving world and saves", async () => {
+  it("atomically resets player-owned data while preserving world and developer recovery snapshots", async () => {
     await service.createGame("main", "測試世界");
     const skills = Array.from({ length: 6 }, (_, index) => ({ id: `skill-${index}`, name: `舊技能${index}` }));
     const inventory = Array.from({ length: 6 }, (_, index) => ({
       id: `item-${index}`, name: `舊物品${index}`, quantity: 1, category: "misc",
     }));
-    const equipment = Object.fromEntries(Array.from({ length: 8 }, (_, index) => [
-      `slot-${index}`, { id: `equip-${index}`, name: `舊裝備${index}` },
-    ]));
+    const equipmentItems = Array.from({ length: 8 }, (_, index) => ({
+      id: `equip-${index}`,
+      instanceId: `equipped-instance-${index}`,
+      name: `舊裝備${index}`,
+      category: "equipment",
+      quantity: 1,
+      equipmentSlot: `slot-${index}`,
+      modifiers: [{ stat: "defense", operation: "add", value: index + 1 }],
+    }));
     const populated = await service.applyDiff("main", 0, "populate-reset-fixture", {
       world: { name: "保留世界", rules: ["世界規則"] },
       player: {
@@ -87,9 +94,8 @@ describe("AegisService", () => {
         location: { region: "舊地區", location: "舊城鎮" },
         attributes: { strength: 8 },
         skills,
-        equipment,
       },
-      inventory,
+      inventory: [...inventory, ...equipmentItems],
       quests: [{ id: "quest-1", name: "舊任務一" }, { id: "quest-2", name: "舊任務二" }],
       history: { recent: ["近期一", "近期二", "近期三"], major: ["重大一"], summary: ["舊摘要"] },
       npcs: [{ id: "npc-1", name: "世界居民", relationship: "摯友", affinity: 99 }],
@@ -97,16 +103,28 @@ describe("AegisService", () => {
       compendium: [{ id: "book-1", name: "世界圖鑑", unlocked: true, playerNotes: "舊角色筆記" }],
     });
     expect(populated.game.revision).toBe(1);
+    let revision = populated.game.revision;
+    for (let index = 0; index < equipmentItems.length; index += 1) {
+      const equipped = await service.equipItem(
+        "main", revision, `equip-reset-fixture-${index}`, `equipped-instance-${index}`, `slot-${index}`,
+      );
+      revision = equipped.game.revision;
+    }
+    const ready = await service.getGame("main");
+    expect(ready.inventory).toHaveLength(6);
+    expect(Object.keys(ready.player.equipment ?? {})).toHaveLength(8);
     await service.createSave("main", "重設前快照", "save-before-reset");
 
-    const reset = await service.resetPlayer("main", 1, "reset-player-1");
-    expect(reset.game.revision).toBe(2);
+    const reset = await service.resetPlayer("main", revision, "reset-player-1");
+    expect(reset.game.revision).toBe(revision + 1);
     expect(reset.game.player).toMatchObject({
       initialized: false,
       tick: 0,
       money: 0,
       skills: [],
       equipment: {},
+      equippedItems: {},
+      activeEquipmentModifiers: [],
       attributes: {},
       survival: { hunger: 100, hydration: 100 },
     });
@@ -122,10 +140,66 @@ describe("AegisService", () => {
     expect(JSON.stringify(reset.game)).not.toContain("舊任務");
     expect(JSON.stringify(reset.game)).not.toContain("舊摘要");
     expect(await service.listSaves("main")).toHaveLength(1);
+    expect(reset.game.engine.autoSave).toMatchObject({ status: "saved", revision: revision + 1 });
+    expect(reset.game.engine.transactionLog).toHaveLength(1);
 
-    const replay = await service.resetPlayer("main", 1, "reset-player-1");
+    const replay = await service.resetPlayer("main", revision, "reset-player-1");
     expect(replay.idempotentReplay).toBe(true);
-    expect(replay.game.revision).toBe(2);
+    expect(replay.game.revision).toBe(revision + 1);
+  });
+
+  it("moves unique item instances atomically when equipping, swapping, and unequipping", async () => {
+    await service.createGame("main");
+    const added = await service.applyDiff("main", 0, "add-equipment", {
+      inventory: [
+        {
+          id: "bronze-sword", instanceId: "item-bronze", name: "青銅劍", category: "equipment", quantity: 1,
+          equipmentSlot: "mainHand", modifiers: [{ stat: "attack", operation: "add", value: 2 }],
+          acquisition: { type: "initial_item", sourceName: "角色創建", obtainedAtTick: 0 },
+        },
+        {
+          id: "iron-sword", instanceId: "item-iron", name: "鐵劍", category: "equipment", quantity: 1,
+          equipmentSlot: "mainHand", modifiers: [{ stat: "attack", operation: "add", value: 4 }],
+          acquisition: { type: "loot", sourceName: "盜匪首領" },
+        },
+      ],
+    });
+
+    await expect(service.equipItem("main", added.game.revision, "equip-wrong-slot", "item-bronze", "feet"))
+      .rejects.toMatchObject({ code: "INVALID_DIFF" });
+    expect((await service.getGame("main")).revision).toBe(added.game.revision);
+
+    const first = await service.equipItem("main", added.game.revision, "equip-bronze", "item-bronze", "mainHand");
+    expect(first.game.player.equipment).toEqual({ mainHand: "item-bronze" });
+    expect(first.game.inventory.map((item) => item.instanceId)).toEqual(["item-iron"]);
+    expect(first.game.player.equippedItems).toMatchObject({
+      "item-bronze": { instanceId: "item-bronze", location: "equipped", equippedSlot: "mainHand" },
+    });
+    expect(first.game.player.activeEquipmentModifiers).toEqual([
+      expect.objectContaining({ stat: "attack", value: 2, sourceInstanceId: "item-bronze" }),
+    ]);
+    await expect(service.applyDiff("main", first.game.revision, "drop-equipped", {
+      inventory: { remove: [{ instanceId: "item-bronze" }] },
+    })).rejects.toMatchObject({ code: "NO_STATE_CHANGE" });
+
+    const swapped = await service.equipItem("main", first.game.revision, "equip-iron", "item-iron", "mainHand");
+    expect(swapped.game.player.equipment).toEqual({ mainHand: "item-iron" });
+    expect(swapped.game.inventory.map((item) => item.instanceId)).toEqual(["item-bronze"]);
+    expect(Object.keys(swapped.game.player.equippedItems as object)).toEqual(["item-iron"]);
+    expect(new Set([
+      ...swapped.game.inventory.map((item) => item.instanceId),
+      ...Object.keys(swapped.game.player.equippedItems as object),
+    ]).size).toBe(2);
+
+    const replay = await service.equipItem("main", first.game.revision, "equip-iron", "item-iron", "mainHand");
+    expect(replay.idempotentReplay).toBe(true);
+    expect(replay.game.revision).toBe(swapped.game.revision);
+
+    const removed = await service.unequipItem("main", swapped.game.revision, "unequip-iron", "mainHand");
+    expect(removed.game.player.equipment).toEqual({ mainHand: null });
+    expect(removed.game.player.equippedItems).toEqual({});
+    expect(removed.game.player.activeEquipmentModifiers).toEqual([]);
+    expect(removed.game.inventory.map((item) => item.instanceId).sort()).toEqual(["item-bronze", "item-iron"]);
   });
 
   it("settles time, consumes food and container capacity, and refills safely", async () => {
@@ -192,6 +266,17 @@ describe("AegisService", () => {
     await service.createGame("main");
     const slept = await service.advanceTime("main", 0, "sleep-8-hours", 8, "sleep", "temperate", "夜間睡眠");
     expect(slept.survival).toMatchObject({ hunger: 89.6, hydration: 84.4, elapsedGameMinutes: 480 });
+  });
+
+  it("reads survival decay rates from authoritative world balance instead of item examples", async () => {
+    await service.createGame("main");
+    const configured = await service.applyDiff("main", 0, "world-survival-balance", {
+      world: { survivalBalance: { hungerPerGameHour: 1, hydrationPerGameHour: 1.5 } },
+    });
+    const elapsed = await service.advanceTime(
+      "main", configured.game.revision, "balanced-hour", 2, "normal", "temperate", "日常活動兩小時",
+    );
+    expect(elapsed.survival).toMatchObject({ hunger: 98, hydration: 97, elapsedGameMinutes: 120 });
   });
 
   it("does not advance revision when an already empty player is reset", async () => {

@@ -29,6 +29,13 @@ export const CORE_RULES: RuntimeRule[] = [
     instruction: "凡持久狀態改變，必須先成功呼叫 aegis_apply_state_diff；寫入失敗時不得宣稱變更已發生。",
   },
   {
+    id: "PERSISTENCE_001",
+    category: "persistence",
+    priority: "Critical",
+    triggers: ["persistence"],
+    instruction: "每次成功交易即自動保存。一般玩家不提供手動存檔、存檔列表、讀檔或回溯世界狀態。",
+  },
+  {
     id: "PLAYER_001",
     category: "presentation",
     priority: "Critical",
@@ -61,7 +68,7 @@ export const CORE_RULES: RuntimeRule[] = [
     category: "world",
     priority: "High",
     triggers: ["movement", "rest", "combat", "crafting"],
-    instruction: "只有實際耗時的行動推進時間與 tick；介面查詢、讀檔與純說明不推進世界。",
+    instruction: "只有實際耗時的行動推進時間與 tick；介面查詢與純說明不推進世界。",
   },
   {
     id: "SURVIVAL_001",

@@ -53,7 +53,7 @@ describe("production HTTP surface", () => {
   it("serves health and initializes MCP on the secret path", async () => {
     const health = await fetch(`${origin}/healthz`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ ok: true, version: "0.3.0" });
+    expect(await health.json()).toMatchObject({ ok: true, version: "0.4.0" });
 
     const healthWithTrailingSlash = await fetch(`${origin}/healthz/`);
     expect(healthWithTrailingSlash.status).toBe(200);
@@ -85,7 +85,7 @@ describe("production HTTP surface", () => {
     const payload = (await initialized.json()) as { result?: { serverInfo?: { name?: string } } };
     expect(payload.result?.serverInfo?.name).toBe("aegis-rpg");
 
-    for (const version of ["v1", "v2", "v3"]) {
+    for (const version of ["v1", "v2", "v3", "v4"]) {
       const uri = `ui://widget/aegis-dashboard-${version}.html`;
       const dashboardResource = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
         method: "POST",
@@ -112,15 +112,74 @@ describe("production HTTP surface", () => {
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }),
     });
-    const toolsPayload = (await toolsList.json()) as { result?: { tools?: Array<{ name?: string }> } };
+    const toolsPayload = (await toolsList.json()) as {
+      result?: { tools?: Array<{ name?: string; description?: string; _meta?: Record<string, unknown> }> };
+    };
     const names = toolsPayload.result?.tools?.map((tool) => tool.name) ?? [];
-    expect(names).toHaveLength(13);
+    expect(names).toHaveLength(12);
     expect(names).toEqual(expect.arrayContaining([
       "aegis_reset_player",
       "aegis_advance_time",
       "aegis_apply_survival_event",
       "aegis_use_item",
       "aegis_refill_container",
+      "aegis_equip_item",
+      "aegis_unequip_item",
     ]));
+    expect(names).not.toEqual(expect.arrayContaining([
+      "aegis_create_save", "aegis_list_saves", "aegis_load_save",
+    ]));
+    for (const tool of toolsPayload.result?.tools ?? []) {
+      expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v4.html");
+      expect(tool.description).toMatch(/[㐀-鿿]/u);
+    }
+
+    const callTool = async (id: number, name: string, args: Record<string, unknown>) => {
+      const response = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }),
+      });
+      expect(response.status).toBe(200);
+      return await response.json() as {
+        result?: {
+          isError?: boolean;
+          structuredContent?: { result?: Record<string, unknown> };
+        };
+      };
+    };
+
+    const created = await callTool(10, "aegis_create_game", { game_id: "ui-flow", title: "介面測試" });
+    const createdResult = created.result?.structuredContent?.result as {
+      dashboard?: { game?: { revision?: number } };
+    };
+    expect(createdResult.dashboard?.game?.revision).toBe(0);
+
+    const prepared = await callTool(11, "aegis_prepare_turn", {
+      game_id: "ui-flow", player_input: "觀察周圍，不推進時間",
+    });
+    const preparedResult = prepared.result?.structuredContent?.result as {
+      dashboard?: { game?: { revision?: number } };
+    };
+    expect(preparedResult.dashboard?.game?.revision).toBe(0);
+
+    const committed = await callTool(12, "aegis_apply_state_diff", {
+      game_id: "ui-flow", expected_revision: 0, idempotency_key: "ui-turn-1",
+      diff: { player: { initialized: true, name: "測試者", hp: 10, mp: 8, sp: 6 } },
+    });
+    const committedResult = committed.result?.structuredContent?.result as {
+      dashboard?: { game?: { revision?: number; player?: { sp?: number } } };
+    };
+    expect(committedResult.dashboard?.game).toMatchObject({ revision: 1, player: { sp: 6 } });
+
+    const rejected = await callTool(13, "aegis_apply_state_diff", {
+      game_id: "ui-flow", expected_revision: 1, idempotency_key: "ui-no-op",
+      diff: { inventory: [], quests: [] },
+    });
+    expect(rejected.result?.isError).toBe(true);
+    expect(rejected.result?.structuredContent?.result).not.toHaveProperty("dashboard");
   });
 });

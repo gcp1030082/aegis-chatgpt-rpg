@@ -103,6 +103,7 @@
       .extra-title { margin: 11px 0 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
       .ok { color: var(--good); }
       .warning { color: var(--warning); }
+      .autosave { margin-top: 10px; color: var(--good); font-size: 12px; }
       #status { min-height: 18px; margin: 8px 2px 0; color: var(--muted); font-size: 12px; }
       @media (max-width: 560px) {
         body { padding: 8px; }
@@ -131,9 +132,10 @@
             <div class="role" id="player-role">—</div>
             <div class="location" id="player-location">—</div>
           </div>
-          <div class="revision" id="revision">rev —</div>
+          <div class="revision" id="revision">權威狀態同步中</div>
         </div>
         <div class="stats" id="stats"></div>
+        <div class="autosave" id="autosave">進度已自動保存</div>
       </section>
 
       <nav aria-label="AEGIS 資料分類">
@@ -142,7 +144,6 @@
         <button type="button" data-tab="equipment" aria-selected="false">裝備 <span class="tab-count" id="equipment-count">0</span></button>
         <button type="button" data-tab="skills" aria-selected="false">技能 <span class="tab-count" id="skills-count">0</span></button>
         <button type="button" data-tab="quests" aria-selected="false">任務 <span class="tab-count" id="quests-count">0</span></button>
-        <button type="button" data-tab="saves" aria-selected="false">存檔 <span class="tab-count" id="saves-count">0</span></button>
       </nav>
 
       <section class="panel active" id="panel-overview">
@@ -176,11 +177,11 @@
         <article class="card">
           <h2>技能</h2>
           <p class="section-intro">點擊技能可查看等級、效果、消耗、來源與使用條件。</p>
+          <div class="inventory-tabs" id="skill-tabs" role="tablist" aria-label="技能分類"></div>
           <div class="list" id="skills"></div>
         </article>
       </section>
       <section class="panel" id="panel-quests"><article class="card"><h2>任務</h2><div class="list" id="quests"></div></article></section>
-      <section class="panel" id="panel-saves"><article class="card"><h2>Save Slots</h2><div class="list" id="saves"></div></article></section>
       <div id="status" role="status"></div>
     </main>
 
@@ -188,6 +189,8 @@
       let dashboard = null;
       let inventoryItems = [];
       let inventoryCategory = "all";
+      let skillItems = [];
+      let skillCategory = "all";
       let rpcId = 0;
       const pending = new Map();
       const $ = (id) => document.getElementById(id);
@@ -214,7 +217,7 @@
       }, { passive: true });
 
       const bridgeReady = request("ui/initialize", {
-        appInfo: { name: "aegis-dashboard", version: "0.3.0" },
+        appInfo: { name: "aegis-dashboard", version: "0.4.0" },
         appCapabilities: {},
         protocolVersion: "2026-01-26",
       }).then(() => notify("ui/notifications/initialized", {}));
@@ -231,17 +234,22 @@
         const player = asRecord(game.player);
         const world = asRecord(game.world);
         const location = asRecord(player.location);
-        const inventory = normalizeCollection(game.inventory).map(item => ({ ...item, category: inventoryCategoryOf(item) }));
+        const inventory = normalizeCollection(game.inventory)
+          .filter(item => item.location !== "equipped" && item.equipped !== true)
+          .map(item => ({ ...item, category: inventoryCategoryOf(item) }));
         const skills = normalizeNamedCollection(player.skills);
-        const equipment = normalizeEquipment(player.equipment);
+        const equipment = normalizeEquipment(player.equipment, player.equippedItems);
         const quests = normalizeCollection(game.quests);
-        const saves = normalizeCollection(dashboard.saves);
 
         $("world-title").textContent = [world.name || game.title, world.genre].filter(Boolean).join("｜");
         $("player-name").textContent = player.name || "未建立角色";
-        $("player-role").textContent = [player.race, player.role].filter(Boolean).join("・") || "—";
-        $("player-location").textContent = [location.region, location.location, location.sublocation].filter(Boolean).join(" › ") || "位置未知";
-        $("revision").textContent = `rev ${game.revision}`;
+        $("player-role").textContent = [player.race, player.role || player.profession || player.identity || player.class].filter(Boolean).join("・") || "—";
+        $("player-location").textContent = [
+          location.region || player.region,
+          location.location || player.place,
+          location.sublocation || player.sublocation,
+        ].filter(Boolean).join(" › ") || (typeof player.location === "string" ? player.location : "位置未知");
+        $("revision").textContent = "權威狀態已同步";
 
         renderStats(player);
         renderObject($("attributes"), player.attributes, "尚無屬性資料");
@@ -249,23 +257,23 @@
         inventoryItems = inventory;
         renderInventoryCategory();
         renderEquipment($("equipment"), equipment);
-        renderSkills($("skills"), skills);
+        skillItems = skills;
+        renderSkillTabs();
+        renderSkillCategory();
         renderEntities($("quests"), quests, "目前沒有任務", item => ({
           title: pick(item, ["name", "title", "名稱"]) || "未命名任務",
           badge: pick(item, ["status", "狀態"]) || "",
           note: pick(item, ["description", "note", "描述", "資訊"]) || formatObjective(item.objectives),
-        }));
-        renderEntities($("saves"), saves, "尚未建立存檔", item => ({
-          title: item.name || "未命名存檔",
-          badge: item.sourceRevision == null ? "" : `rev ${item.sourceRevision}`,
-          note: `${formatDate(item.createdAt)}｜${item.saveId || "—"}`,
         }));
 
         setCount("inventory-count", inventory.length);
         setCount("equipment-count", equipment.filter(entry => !entry.empty).length);
         setCount("skills-count", skills.length);
         setCount("quests-count", quests.length);
-        setCount("saves-count", saves.length);
+        const autoSave = asRecord(game.autoSave);
+        $("autosave").textContent = autoSave.savedAt
+          ? `進度已自動保存｜${formatDate(autoSave.savedAt)}`
+          : "進度已自動保存";
         $("status").textContent = `最後更新：${formatDate(game.updatedAt)}`;
       }
 
@@ -274,10 +282,11 @@
         const hunger = boundedMetric(survival.hunger, 100);
         const hydration = boundedMetric(survival.hydration, 100);
         const stats = [
-          ["HP", player.hp ?? "—"], ["MP", player.mp ?? "—"],
+          ["生命", resourceValue(player, "hp")], ["魔力", resourceValue(player, "mp")],
+          ["體力", resourceValue(player, "sp")],
           ["等級", player.level ?? "—"], ["金錢", player.money ?? 0],
-          ["飽食度", `${formatMetric(hunger)} / 100｜${survivalStatus("hunger", hunger)}`],
-          ["補水度", `${formatMetric(hydration)} / 100｜${survivalStatus("hydration", hydration)}`],
+          ["飽食度", `${formatMetric(hunger)}／100｜${survivalStatus("hunger", hunger)}`],
+          ["補水度", `${formatMetric(hydration)}／100｜${survivalStatus("hydration", hydration)}`],
           ["日期", player.date ?? "—"], ["時間", player.time ?? "—"],
           ["季節", player.season ?? "—"], ["天氣", player.weather ?? "—"],
         ];
@@ -294,24 +303,27 @@
         if (!items.length) return root.append(el("div", "empty", inventoryCategory === "all" ? "背包目前是空的" : "此分類目前沒有物品"));
         for (const item of items) {
           const name = pick(item, ["name", "title", "名稱"]) || "未命名物品";
-          const quantity = pick(item, ["qty", "quantity", "count", "數量"]);
+          const quantity = pick(item, ["quantity", "qty", "count", "數量"]);
           const description = pick(item, ["description", "info", "lore", "note", "物品資訊", "描述", "說明"]);
-          const effect = pick(item, ["effect", "useEffect", "effects", "效果", "使用效果"]);
-          const source = pick(item, ["source", "origin", "acquiredFrom", "來源", "取得方式"]);
+          const effect = formatItemEffects(item);
+          const source = formatAcquisition(item, "item");
           const category = categoryLabel(item.category);
+          const effectLabel = itemEffectLabel(item);
           const quality = pick(item, ["quality", "rarity", "grade", "品質", "稀有度"]);
           const durability = formatPair(
             pick(item, ["durability", "condition", "耐久度"]),
             pick(item, ["maxDurability", "最大耐久度"]),
           );
           const known = new Set([
-            "id", "name", "title", "名稱", "qty", "quantity", "count", "數量",
+            "id", "instanceId", "templateId", "location", "equipped", "equippedSlot",
+            "name", "title", "名稱", "qty", "quantity", "count", "數量",
             "description", "info", "lore", "note", "物品資訊", "描述", "說明",
             "effect", "useEffect", "effects", "效果", "使用效果", "source", "origin", "acquiredFrom", "來源", "取得方式",
             "category", "type", "分類", "類型", "quality", "rarity", "grade", "品質", "稀有度",
             "usage", "use", "使用方式", "weight", "重量", "value", "price", "價值", "價格",
             "durability", "condition", "耐久度", "maxDurability", "最大耐久度", "requirements", "requirement", "使用條件", "需求",
             "hungerRestore", "hydrationRestore", "usesRemaining", "maxUses", "refillable", "useRestrictions", "extraEffect", "state",
+            "acquisition", "modifiers", "equipmentSlot", "equipmentSlots", "slot", "tags", "restrictions",
           ]);
           root.append(expandable({
             title: name,
@@ -321,17 +333,15 @@
               field("數量", quantity, true),
               field("類型", category),
               field("品質／稀有度", quality),
-              field("使用效果", effect, true, true),
-              field("飽食度恢復量", pick(item, ["hungerRestore", "飽食度恢復量"])),
-              field("補水度恢復量", pick(item, ["hydrationRestore", "補水度恢復量"])),
+              field(effectLabel, effect, false, true),
               field("剩餘容量／次數", formatPair(pick(item, ["usesRemaining", "剩餘容量"]), pick(item, ["maxUses", "最大容量"]))),
               field("可重新補充", pick(item, ["refillable", "可重新補充"])),
               field("容器狀態", pick(item, ["state", "狀態"])),
               field("使用方式", pick(item, ["usage", "use", "使用方式"]), false, true),
-              field("使用限制", pick(item, ["useRestrictions", "使用限制"]), false, true),
+              field("使用限制", pick(item, ["restrictions", "useRestrictions", "使用限制"]), false, true),
               field("額外效果", pick(item, ["extraEffect", "額外效果"]), false, true),
-              field("來源", source, true, true),
-              field("物品資訊", description, true, true),
+              field("來源", source, false, true),
+              field("物品資訊", description, false, true),
               field("重量", pick(item, ["weight", "重量"])),
               field("價值", pick(item, ["value", "price", "價值", "價格"])),
               field("耐久度", durability),
@@ -397,38 +407,74 @@
 
       function renderSkills(root, skills) {
         root.replaceChildren();
-        if (!skills.length) return root.append(el("div", "empty", "目前沒有已記錄技能"));
+        if (!skills.length) return root.append(el("div", "empty", skillCategory === "all" ? "目前沒有已記錄技能" : "此分類目前沒有技能"));
         for (const skill of skills) {
           const name = pick(skill, ["name", "title", "名稱"]) || "未命名技能";
           const level = pick(skill, ["level", "rank", "tier", "等級", "階級"]);
           const description = pick(skill, ["description", "info", "note", "技能資訊", "描述", "說明"]);
-          const effect = pick(skill, ["effect", "effects", "效果", "技能效果"]);
-          const source = pick(skill, ["source", "origin", "learnedFrom", "來源", "習得方式"]);
+          const effect = formatSkillEffects(skill);
+          const source = formatAcquisition(skill, "skill");
+          const category = skillCategoryLabel(skill);
           const known = new Set([
             "id", "name", "title", "名稱", "level", "rank", "tier", "等級", "階級",
             "description", "info", "note", "技能資訊", "描述", "說明", "effect", "effects", "效果", "技能效果",
             "source", "origin", "learnedFrom", "來源", "習得方式", "type", "category", "類型", "分類",
             "cost", "manaCost", "mpCost", "staminaCost", "消耗", "cooldown", "冷卻", "冷卻時間",
             "proficiency", "experience", "exp", "熟練度", "requirements", "requirement", "使用條件", "需求",
+            "categoryLabel", "tags", "acquisition", "uniqueScope", "uniqueHolderId",
           ]);
           root.append(expandable({
             title: name,
-            badge: present(level) ? `Lv. ${display(level)}` : "等級未記錄",
-            note: description ? display(description) : "點擊查看技能資料",
+            badge: present(level) ? `階級 ${display(level)}` : category,
+            note: [category, description].filter(present).map(display).join("・") || "點擊查看技能資料",
             fields: [
-              field("等級／階級", level, true),
-              field("類型", pick(skill, ["type", "category", "類型", "分類"])),
-              field("技能效果", effect, true, true),
-              field("技能資訊", description, true, true),
+              field("分類", category, true),
+              field("等級／階級", level, false),
+              field("技能說明", description, false, true),
+              field("實際效果", effect, false, true),
               field("消耗", pick(skill, ["cost", "manaCost", "mpCost", "staminaCost", "消耗"])),
               field("冷卻時間", pick(skill, ["cooldown", "冷卻", "冷卻時間"])),
               field("熟練度", pick(skill, ["proficiency", "experience", "exp", "熟練度"])),
-              field("來源／習得方式", source, true, true),
+              field("來源", source, false, true),
+              field("次級標籤", formatTags(skill.tags), false, true),
               field("使用條件", pick(skill, ["requirements", "requirement", "使用條件", "需求"]), false, true),
             ],
             extras: extraFields(skill, known),
           }));
         }
+      }
+
+      function renderSkillTabs() {
+        const root = $("skill-tabs");
+        root.replaceChildren();
+        const categories = [];
+        const seen = new Set();
+        for (const skill of skillItems) {
+          const id = skillCategoryOf(skill);
+          if (seen.has(id)) continue;
+          seen.add(id);
+          categories.push({ id, label: skillCategoryLabel(skill) });
+        }
+        if (skillCategory !== "all" && !seen.has(skillCategory)) skillCategory = "all";
+        for (const category of [{ id: "all", label: "全部" }, ...categories]) {
+          const button = el("button", "", category.label);
+          button.type = "button";
+          button.dataset.skillCategory = category.id;
+          button.setAttribute("aria-selected", String(skillCategory === category.id));
+          button.addEventListener("click", () => {
+            skillCategory = category.id;
+            root.querySelectorAll("button").forEach(item => item.setAttribute("aria-selected", String(item === button)));
+            renderSkillCategory();
+          });
+          root.append(button);
+        }
+      }
+
+      function renderSkillCategory() {
+        renderSkills(
+          $("skills"),
+          skillCategory === "all" ? skillItems : skillItems.filter(skill => skillCategoryOf(skill) === skillCategory),
+        );
       }
 
       function renderEquipment(root, entries) {
@@ -438,18 +484,19 @@
           const item = entry.item;
           const name = entry.empty ? "未裝備" : pick(item, ["name", "title", "名稱"]) || "未命名裝備";
           const description = pick(item, ["description", "info", "lore", "note", "裝備資訊", "描述", "說明"]);
-          const effect = pick(item, ["effect", "effects", "bonus", "bonuses", "效果", "裝備效果", "加成"]);
-          const source = pick(item, ["source", "origin", "acquiredFrom", "來源", "取得方式"]);
+          const effect = formatItemEffects(item);
+          const source = formatAcquisition(item, "item");
           const durability = formatPair(
             pick(item, ["durability", "condition", "耐久度"]),
             pick(item, ["maxDurability", "最大耐久度"]),
           );
           const known = new Set([
-            "id", "name", "title", "名稱", "slot", "部位", "description", "info", "lore", "note", "裝備資訊", "描述", "說明",
+            "id", "instanceId", "templateId", "location", "equippedSlot", "name", "title", "名稱", "slot", "部位", "description", "info", "lore", "note", "裝備資訊", "描述", "說明",
             "effect", "effects", "bonus", "bonuses", "效果", "裝備效果", "加成", "source", "origin", "acquiredFrom", "來源", "取得方式",
             "type", "category", "類型", "分類", "quality", "rarity", "grade", "品質", "稀有度",
             "attack", "damage", "攻擊", "攻擊力", "defense", "armor", "防禦", "防禦力",
             "durability", "condition", "耐久度", "maxDurability", "最大耐久度", "requirements", "requirement", "裝備條件", "需求",
+            "acquisition", "modifiers", "equipmentSlot", "equipmentSlots", "tags", "quantity",
           ]);
           root.append(expandable({
             title: name,
@@ -462,10 +509,10 @@
               field("品質／稀有度", pick(item, ["quality", "rarity", "grade", "品質", "稀有度"])),
               field("攻擊力", pick(item, ["attack", "damage", "攻擊", "攻擊力"])),
               field("防禦力", pick(item, ["defense", "armor", "防禦", "防禦力"])),
-              field("裝備效果", effect, true, true),
+              field("裝備效果", effect, false, true),
               field("耐久度", durability),
-              field("來源", source, true, true),
-              field("裝備資訊", description, true, true),
+              field("來源", source, false, true),
+              field("裝備資訊", description, false, true),
               field("裝備條件", pick(item, ["requirements", "requirement", "裝備條件", "需求"]), false, true),
             ],
             extras: extraFields(item, known),
@@ -512,8 +559,9 @@
       function field(label, value, always = false, wide = false) { return { label, value, always, wide }; }
 
       function extraFields(record, known) {
+        const hidden = new Set(["instanceId", "templateId", "location", "equippedSlot", "categoryLabel", "uniqueHolderId", "uniqueScope"]);
         return Object.entries(asRecord(record))
-          .filter(([key, value]) => !known.has(key) && !key.startsWith("_") && present(value))
+          .filter(([key, value]) => !known.has(key) && !hidden.has(key) && !key.startsWith("_") && present(value))
           .sort(([a], [b]) => a.localeCompare(b, "zh-Hant"));
       }
 
@@ -531,11 +579,17 @@
         });
       }
 
-      function normalizeEquipment(value) {
+      function normalizeEquipment(value, equippedItems) {
         if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const registry = asRecord(equippedItems);
         return Object.entries(value).map(([slot, raw]) => {
           const empty = raw == null || raw === "" || raw === "無" || raw === "未裝備";
-          const item = empty ? {} : typeof raw === "object" && !Array.isArray(raw) ? raw : { name: raw };
+          const referenced = typeof raw === "string" ? registry[raw] : undefined;
+          const item = empty
+            ? {}
+            : referenced && typeof referenced === "object" && !Array.isArray(referenced)
+              ? referenced
+              : typeof raw === "object" && !Array.isArray(raw) ? raw : { name: raw };
           return { slot, slotLabel: equipmentSlotLabel(slot), item, empty };
         });
       }
@@ -547,7 +601,158 @@
           hands: "手部", gloves: "手部", legs: "腿部", pants: "腿部", feet: "足部", boots: "足部",
           accessory: "飾品", accessories: "飾品", ring: "戒指", necklace: "項鍊", cloak: "披風",
         };
-        return labels[slot] || humanizeKey(slot);
+        if (labels[slot]) return labels[slot];
+        if (/[㐀-鿿]/u.test(slot)) return slot;
+        console.warn(`[AEGIS i18n] 缺少裝備欄翻譯：${slot}`);
+        return "自訂裝備欄";
+      }
+
+      function resourceValue(player, key) {
+        const raw = player[key];
+        if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+          const current = pick(raw, ["current", "value", "now", "目前值"]);
+          const maximum = pick(raw, ["max", "maximum", "上限", "最大值"]);
+          return formatPair(current, maximum) ?? "—";
+        }
+        const maximum = pick(player, [
+          `max${key.toUpperCase()}`,
+          `${key}Max`,
+          `max${key[0].toUpperCase()}${key.slice(1)}`,
+          `${key}_max`,
+        ]);
+        return formatPair(raw, maximum) ?? "—";
+      }
+
+      function skillCategoryOf(skill) {
+        const raw = String(pick(skill, ["category", "type", "分類", "類型"]) || "other").trim();
+        const aliases = {
+          combat: "combat", "戰鬥": "combat", magic: "magic", "魔法": "magic",
+          survival: "survival", "求生": "survival", production: "production", crafting: "production", "生產": "production",
+          knowledge: "knowledge", "知識": "knowledge", social: "social", "社交": "social",
+          special: "special", "特殊": "special", unique: "unique", "唯一": "unique", other: "other", "其他": "other",
+        };
+        return aliases[raw.toLowerCase()] || aliases[raw] || raw;
+      }
+
+      function skillCategoryLabel(skill) {
+        const explicit = pick(skill, ["categoryLabel", "分類名稱"]);
+        if (typeof explicit === "string" && /[㐀-鿿]/u.test(explicit)) return explicit;
+        const id = skillCategoryOf(skill);
+        const labels = {
+          combat: "戰鬥", magic: "魔法", survival: "求生", production: "生產",
+          knowledge: "知識", social: "社交", special: "特殊", unique: "唯一", other: "其他",
+        };
+        if (labels[id]) return labels[id];
+        if (/[㐀-鿿]/u.test(id)) return id;
+        console.warn(`[AEGIS i18n] 缺少技能分類翻譯：${id}`);
+        return "其他";
+      }
+
+      function itemEffectLabel(item) {
+        if (item.category === "consumable") return "使用效果";
+        if (item.category === "equipment") return "裝備效果";
+        if (item.category === "special") return "特殊用途與效果";
+        const type = String(pick(item, ["type", "類型"]) || "").toLowerCase();
+        return type === "tool" || type === "工具" ? "功能" : "用途";
+      }
+
+      function formatItemEffects(item) {
+        const values = [];
+        if (Array.isArray(item.effects)) values.push(...item.effects.map(formatEffect).filter(present));
+        if (Array.isArray(item.modifiers)) values.push(...item.modifiers.map(formatModifier).filter(present));
+        if (!values.length) {
+          const legacy = pick(item, ["effect", "useEffect", "bonus", "bonuses", "效果", "使用效果", "裝備效果", "加成"]);
+          if (present(legacy)) values.push(display(legacy));
+        }
+        return values.length ? values.join("\n") : undefined;
+      }
+
+      function formatSkillEffects(skill) {
+        if (Array.isArray(skill.effects)) {
+          const values = skill.effects.map(formatEffect).filter(present);
+          if (values.length) return values.join("\n");
+        }
+        const legacy = pick(skill, ["effect", "效果", "技能效果"]);
+        return present(legacy) ? display(legacy) : undefined;
+      }
+
+      function formatEffect(raw) {
+        const effect = asRecord(raw);
+        const type = String(effect.type || "").toLowerCase();
+        const value = effect.value;
+        const signed = typeof value === "number" ? `${value >= 0 ? "+" : ""}${formatMetric(value)}` : "";
+        const labels = {
+          restore_hunger: `飽食度 ${signed}`,
+          restore_hydration: `補水度 ${signed}`,
+          restore_hp: `生命 ${signed}`,
+          restore_mp: `魔力 ${signed}`,
+          restore_sp: `體力 ${signed}`,
+        };
+        if (labels[type] && signed) return labels[type];
+        if (type === "unlock_action") return chineseText(effect.label, effect.description) || "解鎖一項特殊行動";
+        if (type === "apply_status") return `獲得狀態：${chineseText(effect.statusName, effect.label) || "已記錄狀態"}`;
+        if (type === "remove_status") return `移除狀態：${chineseText(effect.statusName, effect.label) || "已記錄狀態"}`;
+        if (type === "modify_stat") return formatModifier(effect);
+        return chineseText(effect.label, effect.description, effect.text) || "已記錄一項特殊效果";
+      }
+
+      function formatModifier(raw) {
+        const modifier = asRecord(raw);
+        const stat = localizedStat(modifier.stat);
+        const value = modifier.value;
+        const operation = String(modifier.operation || "add");
+        if (!stat || typeof value !== "number") return chineseText(modifier.label, modifier.description) || "已記錄一項裝備修正";
+        if (operation === "multiply") return `${stat} ×${formatMetric(value)}`;
+        if (operation === "subtract") return `${stat} -${formatMetric(Math.abs(value))}`;
+        return `${stat} ${value >= 0 ? "+" : ""}${formatMetric(value)}`;
+      }
+
+      function localizedStat(value) {
+        if (typeof value !== "string" || !value) return "";
+        const labels = {
+          attack: "攻擊力", damage: "傷害", defense: "防禦力", armor: "護甲",
+          hp: "生命", mp: "魔力", sp: "體力", hunger: "飽食度", hydration: "補水度",
+          focus: "專注", action_efficiency: "行動效率", stamina_recovery: "體力恢復效率",
+        };
+        if (labels[value]) return labels[value];
+        if (/[㐀-鿿]/u.test(value)) return value;
+        console.warn(`[AEGIS i18n] 缺少能力值翻譯：${value}`);
+        return "能力值";
+      }
+
+      function formatAcquisition(record, kind) {
+        const acquisition = asRecord(record.acquisition);
+        const rawSource = pick(record, ["source", "origin", "acquiredFrom", "learnedFrom", "來源", "取得方式", "習得方式"]);
+        const type = String(acquisition.type || "").toLowerCase();
+        if (type === "initial_item") return "初始物品";
+        if (type === "initial_skill") return "初始技能";
+        if (!type && typeof rawSource === "string" && /初始物品|角色創建|角色建立|旅行包/.test(rawSource) && kind === "item") return "初始物品";
+        if (!type && typeof rawSource === "string" && /初始技能|角色創建|角色建立/.test(rawSource) && kind === "skill") return "初始技能";
+        const labels = {
+          shop_purchase: "商店購買", quest_reward: "任務獎勵", loot: "戰利品", gathering: "採集取得",
+          crafting: "製作取得", npc_gift: "NPC 贈與", chest: "寶箱取得", world_event: "世界事件取得",
+          mentor: "導師教授", insight: "自行領悟", book: "書籍學習", profession: "職業訓練",
+          bloodline: "血統能力", contract: "契約取得", equipment_grant: "裝備賦予", recorded_source: "取得紀錄",
+        };
+        const base = labels[type];
+        const sourceName = pick(acquisition, ["sourceName", "名稱"]);
+        if (base && present(sourceName)) return `${base}：${display(sourceName)}`;
+        if (base) return base;
+        if (present(sourceName)) return display(sourceName);
+        return present(rawSource) ? display(rawSource) : undefined;
+      }
+
+      function formatTags(value) {
+        if (!Array.isArray(value) || !value.length) return undefined;
+        return value.map(tag => {
+          const fake = { category: tag };
+          const localized = skillCategoryLabel(fake);
+          return localized === "其他" && typeof tag === "string" && /[㐀-鿿]/u.test(tag) ? tag : localized;
+        }).join("、");
+      }
+
+      function chineseText(...values) {
+        return values.find(value => typeof value === "string" && /[㐀-鿿]/u.test(value));
       }
 
       function renderObject(root, object, emptyText) {
@@ -572,7 +777,7 @@
       function row(title, badge, note) {
         const outer = el("div", "row");
         const head = el("div", "row-head");
-        head.append(el("div", "row-title", String(title || "—")), el("div", "pill", String(badge || "")));
+        head.append(el("div", "row-title", String(title || "—")), el("div", "pill", present(badge) ? display(badge) : ""));
         outer.append(head);
         if (note) outer.append(el("div", "note", display(note)));
         return outer;
@@ -603,12 +808,12 @@
           const entries = Object.entries(value);
           return entries.length ? entries.map(([key, child]) => `${humanizeKey(key)}：${display(child)}`).join("\n") : "—";
         }
-        return String(value);
+        return localizePrimitive(value);
       }
 
       function formatPair(current, maximum) {
         if (!present(current) && !present(maximum)) return undefined;
-        if (present(current) && present(maximum)) return `${display(current)} / ${display(maximum)}`;
+        if (present(current) && present(maximum)) return `${display(current)}／${display(maximum)}`;
         return present(current) ? display(current) : `最大 ${display(maximum)}`;
       }
 
@@ -621,9 +826,37 @@
           attack: "攻擊力", damage: "傷害", defense: "防禦力", armor: "護甲", durability: "耐久度", maxDurability: "最大耐久度",
           hungerRestore: "飽食度恢復量", hydrationRestore: "補水度恢復量", usesRemaining: "剩餘容量／次數", maxUses: "最大容量／次數",
           refillable: "可重新補充", useRestrictions: "使用限制", extraEffect: "額外效果", state: "狀態",
+          categoryLabel: "分類名稱", tags: "次級標籤", modifiers: "裝備修正", acquisition: "取得來源",
+          operation: "運算方式", stat: "能力值", action: "解鎖行動", sourceName: "來源名稱", obtainedAtTick: "取得時間點",
+          current: "目前值", max: "最大值", maximum: "最大值", status: "狀態", reason: "原因",
+          requirements: "使用條件", equipmentSlot: "裝備欄位", equipmentSlots: "可裝備欄位",
+          strength: "力量", dexterity: "敏捷", constitution: "體質", intelligence: "智力", wisdom: "感知", charisma: "魅力",
+          vitality: "活力", agility: "靈巧", endurance: "耐力", spirit: "精神", luck: "幸運",
         };
         if (labels[key]) return labels[key];
-        return String(key).replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+        if (/[㐀-鿿]/u.test(key)) return key;
+        console.warn(`[AEGIS i18n] 缺少欄位翻譯：${key}`);
+        return "擴充資料";
+      }
+
+      function localizePrimitive(value) {
+        if (typeof value !== "string") return String(value);
+        const labels = {
+          consumable: "消耗品", equipment: "裝備", misc: "雜物", special: "特殊",
+          combat: "戰鬥", magic: "魔法", survival: "求生", production: "生產", knowledge: "知識", social: "社交", unique: "唯一", other: "其他",
+          good: "狀態良好", mild: "輕微", moderate: "明顯", severe: "嚴重", critical: "危急",
+          inventory: "背包", equipped: "已裝備", available: "可使用", empty: "已用完", filled: "已補滿",
+          active: "進行中", completed: "已完成", failed: "失敗", locked: "未解鎖",
+          pending: "待處理", in_progress: "進行中", abandoned: "已放棄",
+          poor: "粗劣", common: "普通", uncommon: "優良", rare: "稀有", epic: "史詩", legendary: "傳說",
+          beginner: "初級", intermediate: "中級", advanced: "高級", master: "大師級",
+          sunny: "晴朗", cloudy: "多雲", overcast: "陰", rainy: "雨", storm: "暴風雨", snow: "雪",
+          add: "增加", subtract: "減少", multiply: "倍率調整",
+          initial_item: "初始物品", initial_skill: "初始技能", recorded_source: "取得紀錄",
+          normal: "一般", rest: "休息", sleep: "睡眠", travel: "旅行", running: "奔跑", heavy_labor: "重體力勞動",
+          temperate: "溫和", hot: "炎熱", cold: "寒冷",
+        };
+        return labels[value] || value;
       }
 
       function setCount(id, value) { $(id).textContent = String(value); }

@@ -1,8 +1,9 @@
 import type { GameState, JsonObject } from "./types.js";
-import { normalizeItemCategory } from "./inventory.js";
+import { migrateEquipmentState } from "./equipment.js";
 import { survivalView } from "./survival.js";
+import { normalizeSkills } from "./skills.js";
 
-export const AEGIS_VERSION = "6.7.7-mcp.2";
+export const AEGIS_VERSION = "6.7.7-mcp.4";
 
 export function defaultGameState(gameId: string, title = "AEGIS 冒險"): GameState {
   const now = new Date().toISOString();
@@ -25,6 +26,10 @@ export function defaultGameState(gameId: string, title = "AEGIS 冒險"): GameSt
       language: "",
       religion: "",
       startRegion: "",
+      survivalBalance: {
+        hungerPerGameHour: 2,
+        hydrationPerGameHour: 3,
+      },
       notes: "",
     },
     player: defaultPlayerState(),
@@ -39,6 +44,7 @@ export function defaultGameState(gameId: string, title = "AEGIS 冒險"): GameSt
       historyLimit: 100,
       transactionLog: [],
       idempotencyKeys: [],
+      autoSave: { status: "saved", revision: 0, savedAt: now },
     },
   };
 }
@@ -51,6 +57,8 @@ export function defaultPlayerState(): JsonObject {
     attributes: {},
     skills: [],
     equipment: {},
+    equippedItems: {},
+    activeEquipmentModifiers: [],
     survival: {
       hunger: 100,
       hydration: 100,
@@ -62,7 +70,20 @@ export function defaultPlayerState(): JsonObject {
 
 export function migrateGameState(state: GameState): GameState {
   const migrated = cloneState(state);
+  if (migrated.world.survivalBalance === undefined) {
+    migrated.world.survivalBalance = { hungerPerGameHour: 2, hydrationPerGameHour: 3 };
+  }
   if (migrated.player.skills === undefined) migrated.player.skills = [];
+  if (Array.isArray(migrated.player.skills)) {
+    migrated.player.skills = normalizeSkills(
+      migrated.player.skills.map((skill) =>
+        Boolean(skill) && typeof skill === "object" && !Array.isArray(skill)
+          ? skill as JsonObject
+          : { name: String(skill) },
+      ),
+      false,
+    );
+  }
   if (migrated.player.equipment === undefined) migrated.player.equipment = {};
   if (migrated.player.attributes === undefined) migrated.player.attributes = {};
   if (migrated.player.money === undefined) migrated.player.money = 0;
@@ -74,8 +95,12 @@ export function migrateGameState(state: GameState): GameState {
   if (survival.elapsedGameMinutes === undefined) survival.elapsedGameMinutes = 0;
   if (survival.modifiers === undefined) survival.modifiers = [];
   migrated.player.survival = survival;
-  migrated.inventory = migrated.inventory.map((item) => normalizeItemCategory(item));
-  return migrated;
+  const autoSave = asObject(migrated.engine.autoSave);
+  if (autoSave.status === undefined) autoSave.status = "saved";
+  if (autoSave.revision === undefined) autoSave.revision = migrated.revision;
+  if (autoSave.savedAt === undefined) autoSave.savedAt = migrated.updatedAt;
+  migrated.engine.autoSave = autoSave;
+  return migrateEquipmentState(migrated);
 }
 
 export function toGameView(state: GameState) {
@@ -92,6 +117,7 @@ export function toGameView(state: GameState) {
     inventory: state.inventory,
     quests: state.quests,
     recentHistory: state.history.recent.slice(-12),
+    autoSave: asObject(state.engine.autoSave),
   };
 }
 

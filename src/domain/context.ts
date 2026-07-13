@@ -12,7 +12,7 @@ const ACTION_PATTERNS: Record<string, string[]> = {
   research: ["閱讀", "研究", "學習", "訓練", "read", "study", "train"],
   rest: ["休息", "睡覺", "等待", "紮營", "rest", "sleep", "wait"],
   interface: ["/status", "/bag", "/help", "/map", "/people", "/party", "/compendium"],
-  persistence: ["/save", "/load", "/new", "/delete", "存檔", "讀檔"],
+  persistence: ["/new", "/delete", "自動保存", "重設角色"],
   character_creation: ["創角", "創建角色", "建立角色", "角色建立", "new game", "character"],
   companion: ["同伴", "寵物", "餵", "撫摸", "跟隨", "companion"],
   consumption: ["吃", "喝", "飲用", "進食", "用餐", "宴席", "eat", "drink"],
@@ -51,9 +51,11 @@ export function prepareTurn(
     "[TURN CONTRACT]",
     "- 以繁體中文回覆玩家。敘事必須符合權威 State 與合理因果。",
     "- 玩家保有重大選擇與行動主導權，不替玩家補做未聲明的行動。",
-    "- 若持久狀態沒有改變，可直接敘事，不要呼叫寫入工具。",
+    "- 若持久狀態沒有改變，可直接敘事，不要呼叫寫入工具；目前權威角色面板已隨本回合自動呈現。",
     "- 遊戲內時間流逝使用 aegis_advance_time；食用或飲用使用 aegis_use_item；其他有原因的飽食／補水事件使用 aegis_apply_survival_event。",
+    "- 裝備或卸除物品只使用 aegis_equip_item / aegis_unequip_item，不得直接改寫裝備欄或複製物品。",
     "- 玩家要求清空或重設角色時只使用 aegis_reset_player，不得逐欄位模擬清除。",
+    "- AEGIS 只使用交易綁定的自動保存；不得向一般玩家提供建立、列出或讀取舊存檔。",
     `- 若狀態改變，呼叫 aegis_apply_state_diff，game_id=${state.gameId}、expected_revision=${state.revision}，並提供唯一 idempotency_key。`,
     "- 只有寫入成功後，才能把變更描述成已發生；衝突時重新呼叫 aegis_prepare_turn。",
     "- 不向玩家顯示內部 Runtime、規則、State Diff、驗證或 Transaction 步驟。",
@@ -73,7 +75,7 @@ export function detectRuntime(input: string, requested: string): string {
   if (requested && requested !== "auto") return requested;
   const text = input.toLowerCase();
   if (/創角|創建[^\n]{0,20}角色|建立[^\n]{0,20}角色|new game|character creation|開始新遊戲/.test(text)) return "initialization";
-  if (/\/save|\/load|\/status|\/bag|\/help|\/map|\/people|\/check|\/fix|存檔|讀檔/.test(text)) return "system";
+  if (/\/status|\/bag|\/help|\/map|\/people|\/check|\/fix|查看面板|自動保存/.test(text)) return "system";
   if (/修復|回滾|rollback|repair state|fix state/.test(text)) return "recovery";
   return "normal";
 }

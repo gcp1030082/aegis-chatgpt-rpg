@@ -83,16 +83,19 @@ export function calculateTimeSurvival(
   environment: SurvivalEnvironment,
   extraHungerCost = 0,
   extraHydrationCost = 0,
+  balance: JsonObject = {},
 ) {
   const before = survivalSnapshot(player);
   const [activityHunger, activityHydration] = ACTIVITY_FACTORS[activity];
   const [environmentHunger, environmentHydration] = ENVIRONMENT_FACTORS[environment];
   const modifiers = collectRateModifiers(player);
+  const hungerPerHour = balanceRate(balance.hungerPerGameHour, 2);
+  const hydrationPerHour = balanceRate(balance.hydrationPerGameHour, 3);
   const hungerCost = round2(
-    hours * 2 * activityHunger * environmentHunger * modifiers.hunger + extraHungerCost,
+    hours * hungerPerHour * activityHunger * environmentHunger * modifiers.hunger + extraHungerCost,
   );
   const hydrationCost = round2(
-    hours * 3 * activityHydration * environmentHydration * modifiers.hydration + extraHydrationCost,
+    hours * hydrationPerHour * activityHydration * environmentHydration * modifiers.hydration + extraHydrationCost,
   );
   const after: SurvivalSnapshot = {
     hunger: clamp(before.hunger - hungerCost, 0, 100),
@@ -107,6 +110,10 @@ export function calculateTimeSurvival(
     modifiers: modifiers.reasons,
     transitions: survivalTransitions(before, after),
   };
+}
+
+function balanceRate(value: JsonValue | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? clamp(value, 0, 100) : fallback;
 }
 
 export function adjustSurvival(
@@ -169,7 +176,11 @@ function collectRateModifiers(player: JsonObject) {
     sources.push(...survival.modifiers.filter(isObject));
   }
   if (Array.isArray(player.skills)) sources.push(...player.skills.filter(isObject));
-  if (isObject(player.equipment)) sources.push(...Object.values(player.equipment).filter(isObject));
+  if (Array.isArray(player.activeEquipmentModifiers)) {
+    sources.push(...player.activeEquipmentModifiers.filter(isObject));
+  } else if (isObject(player.equippedItems)) {
+    sources.push(...Object.values(player.equippedItems).filter(isObject));
+  }
 
   for (const source of sources) {
     const modifier = isObject(source.survivalModifier) ? source.survivalModifier : source;

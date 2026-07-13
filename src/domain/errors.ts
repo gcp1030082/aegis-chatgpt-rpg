@@ -25,6 +25,7 @@ export function asAegisError(error: unknown): AegisError {
   if (error instanceof AegisError) return error;
   return new AegisError(
     "STORAGE_ERROR",
-    error instanceof Error ? error.message : "Unknown AEGIS error.",
+    "儲存或系統操作失敗，進度未變更。請稍後安全重試。",
+    { internalType: error instanceof Error ? error.name : "UnknownError" },
   );
 }

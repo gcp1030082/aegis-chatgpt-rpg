@@ -4,6 +4,7 @@ import { applyStateDiff } from "./domain/diff.js";
 import { cloneState, defaultGameState, defaultPlayerState, migrateGameState, toGameView } from "./domain/default-state.js";
 import { AegisError } from "./domain/errors.js";
 import { categorizeItem } from "./domain/inventory.js";
+import { equipInventoryItem, unequipInventoryItem } from "./domain/equipment.js";
 import { prepareTurn } from "./domain/context.js";
 import {
   adjustSurvival,
@@ -16,6 +17,7 @@ import {
 import type { GameState, JsonObject, SaveRecord } from "./domain/types.js";
 import { assertGameId, validateGameState } from "./domain/validation.js";
 import type { GameStore } from "./storage/store.js";
+import { recordAutomaticSave } from "./domain/commit.js";
 
 export class AegisService {
   constructor(
@@ -128,15 +130,8 @@ export class AegisService {
     }
     next.revision = current.revision + 1;
     next.updatedAt = new Date().toISOString();
-    const keys = Array.isArray(next.engine.idempotencyKeys) ? next.engine.idempotencyKeys : [];
-    next.engine.idempotencyKeys = [...keys, key].slice(-100);
-    next.engine.transactionLog = [{
-      idempotencyKey: key,
-      revision: next.revision,
-      time: next.updatedAt,
-      summary: "Player reset",
-      changedPaths,
-    }];
+    next.engine.transactionLog = [];
+    recordAutomaticSave(next, key, "Player reset", changedPaths);
     validateGameState(next, this.config.maxStateBytes);
     const game = await this.store.compareAndSwap(gameId, expectedRevision, next);
     return {
@@ -186,6 +181,7 @@ export class AegisService {
       environment,
       extraHungerCost,
       extraHydrationCost,
+      asJsonObject(mutation.current.world.survivalBalance),
     );
     const playerPatch: JsonObject = { survival: survivalPatch(calculation.after) };
     if (cleanText(newDate, 100)) playerPatch.date = cleanText(newDate, 100);
@@ -304,11 +300,11 @@ export class AegisService {
     }
     if (hasUseRestrictions(item) && !restrictionsMet) {
       throw new AegisError("INVALID_DIFF", `${String(item.name ?? reference)} 的使用限制尚未確認。`, {
-        useRestrictions: item.useRestrictions ?? item.requirements ?? item["使用限制"],
+        useRestrictions: item.restrictions ?? item.useRestrictions ?? item.requirements ?? item["使用限制"],
       });
     }
-    const hungerRestore = itemNumber(item, ["hungerRestore", "飽食度恢復量"]);
-    const hydrationRestore = itemNumber(item, ["hydrationRestore", "補水度恢復量"]);
+    const hungerRestore = itemEffectValue(item, "restore_hunger", ["hungerRestore", "飽食度恢復量"]);
+    const hydrationRestore = itemEffectValue(item, "restore_hydration", ["hydrationRestore", "補水度恢復量"]);
     const adjustment = adjustSurvival(mutation.current.player, hungerRestore, hydrationRestore);
     consumeInventoryItem(inventory, index, item);
     const itemName = String(item.name ?? item.title ?? reference);
@@ -386,6 +382,71 @@ export class AegisService {
     return { ...committed, idempotentReplay: false, item: { id: item.id ?? null, name: itemName, usesRemaining: item.maxUses } };
   }
 
+  async equipItem(
+    gameId: string,
+    expectedRevision: number,
+    idempotencyKey: string,
+    instanceId: string,
+    slot: string,
+  ) {
+    const itemId = cleanText(instanceId, 200);
+    const equipmentSlot = cleanText(slot, 100);
+    if (!itemId || !equipmentSlot) {
+      throw new AegisError("INVALID_DIFF", "裝備物品必須提供 instance_id 與 slot。");
+    }
+    const mutation = await this.mutationContext(gameId, expectedRevision, idempotencyKey);
+    if (mutation.replay) {
+      return { game: mutation.current, changedPaths: [], idempotentReplay: true };
+    }
+    const operation = equipInventoryItem(mutation.current, itemId, equipmentSlot);
+    const itemName = String(operation.equipped.name ?? itemId);
+    const game = await this.commitDirectMutation(
+      gameId,
+      expectedRevision,
+      mutation.key,
+      operation.next,
+      `Equipped ${itemName}`,
+      operation.changedPaths,
+    );
+    return {
+      game,
+      changedPaths: operation.changedPaths,
+      idempotentReplay: false,
+      equipped: operation.equipped,
+      unequipped: operation.unequipped ?? null,
+    };
+  }
+
+  async unequipItem(
+    gameId: string,
+    expectedRevision: number,
+    idempotencyKey: string,
+    slot: string,
+  ) {
+    const equipmentSlot = cleanText(slot, 100);
+    if (!equipmentSlot) throw new AegisError("INVALID_DIFF", "卸除裝備必須提供 slot。");
+    const mutation = await this.mutationContext(gameId, expectedRevision, idempotencyKey);
+    if (mutation.replay) {
+      return { game: mutation.current, changedPaths: [], idempotentReplay: true };
+    }
+    const operation = unequipInventoryItem(mutation.current, equipmentSlot);
+    const itemName = String(operation.unequipped.name ?? operation.unequipped.instanceId ?? "物品");
+    const game = await this.commitDirectMutation(
+      gameId,
+      expectedRevision,
+      mutation.key,
+      operation.next,
+      `Unequipped ${itemName}`,
+      operation.changedPaths,
+    );
+    return {
+      game,
+      changedPaths: operation.changedPaths,
+      idempotentReplay: false,
+      unequipped: operation.unequipped,
+    };
+  }
+
   async listSaves(gameId: string) {
     await this.getGame(gameId);
     return this.store.listSaves(gameId);
@@ -426,8 +487,7 @@ export class AegisService {
 
   async dashboard(gameId: string) {
     const game = await this.getGame(gameId);
-    const saves = await this.store.listSaves(gameId);
-    return { game: toGameView(game), saves };
+    return { game: toGameView(game) };
   }
 
   private async mutationContext(
@@ -465,6 +525,21 @@ export class AegisService {
     const game = await this.store.compareAndSwap(gameId, expectedRevision, result.game);
     return { game, changedPaths: result.changedPaths };
   }
+
+  private async commitDirectMutation(
+    gameId: string,
+    expectedRevision: number,
+    key: string,
+    next: GameState,
+    summary: string,
+    changedPaths: string[],
+  ) {
+    next.revision = expectedRevision + 1;
+    next.updatedAt = new Date().toISOString();
+    recordAutomaticSave(next, key, summary, changedPaths);
+    validateGameState(next, this.config.maxStateBytes);
+    return this.store.compareAndSwap(gameId, expectedRevision, next);
+  }
 }
 
 const PLAYER_DATA_KEYS = new Set([
@@ -480,6 +555,10 @@ function stripPlayerData(record: import("./domain/types.js").JsonObject): import
   return result;
 }
 
+function asJsonObject(value: unknown): JsonObject {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {};
+}
+
 function resetChangedPaths(left: GameState, right: GameState): string[] {
   const paths = ["player", "inventory", "quests", "history", "npcs", "map", "compendium"] as const;
   return paths.filter((path) => JSON.stringify(left[path]) !== JSON.stringify(right[path]));
@@ -487,12 +566,16 @@ function resetChangedPaths(left: GameState, right: GameState): string[] {
 
 function findInventoryItem(inventory: JsonObject[], reference: string): number {
   return inventory.findIndex(
-    (item) => String(item.id ?? "") === reference || String(item.name ?? item.title ?? "") === reference,
+    (item) =>
+      String(item.instanceId ?? "") === reference ||
+      String(item.templateId ?? "") === reference ||
+      String(item.id ?? "") === reference ||
+      String(item.name ?? item.title ?? "") === reference,
   );
 }
 
 function hasUseRestrictions(item: JsonObject): boolean {
-  const value = item.useRestrictions ?? item.requirements ?? item["使用限制"];
+  const value = item.restrictions ?? item.useRestrictions ?? item.requirements ?? item["使用限制"];
   if (Array.isArray(value)) return value.length > 0;
   if (value && typeof value === "object") return Object.keys(value).length > 0;
   return value !== undefined && value !== null && value !== "";
@@ -504,6 +587,19 @@ function itemNumber(item: JsonObject, keys: string[]): number {
     if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
   }
   return 0;
+}
+
+function itemEffectValue(item: JsonObject, type: string, legacyKeys: string[]): number {
+  if (Array.isArray(item.effects)) {
+    return item.effects.reduce<number>((total, raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return total;
+      const effect = raw as JsonObject;
+      return effect.type === type && typeof effect.value === "number" && Number.isFinite(effect.value) && effect.value >= 0
+        ? total + effect.value
+        : total;
+    }, 0);
+  }
+  return itemNumber(item, legacyKeys);
 }
 
 function consumeInventoryItem(inventory: JsonObject[], index: number, item: JsonObject): void {
@@ -535,19 +631,9 @@ function hasIdempotencyKey(state: GameState, key: string): boolean {
 }
 
 function appendRestoreTransaction(state: GameState, key: string, save: SaveRecord): void {
-  const keys = Array.isArray(state.engine.idempotencyKeys) ? state.engine.idempotencyKeys : [];
-  keys.push(key);
-  state.engine.idempotencyKeys = keys.slice(-100);
-  const log = Array.isArray(state.engine.transactionLog) ? state.engine.transactionLog : [];
-  log.push({
-    idempotencyKey: key,
-    revision: state.revision,
-    time: state.updatedAt,
-    summary: `Loaded save ${save.name}`,
-    changedPaths: ["*"],
+  recordAutomaticSave(state, key, `Loaded recovery snapshot ${save.name}`, ["*"], {
     sourceSaveId: save.saveId,
   });
-  state.engine.transactionLog = log.slice(-100);
 }
 
 function deterministicSaveId(gameId: string, key: string): string {

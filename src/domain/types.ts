@@ -54,6 +54,7 @@ export interface GameView {
   inventory: JsonObject[];
   quests: JsonObject[];
   recentHistory: JsonValue[];
+  autoSave: JsonObject;
 }
 
 export interface PreparedTurn {
