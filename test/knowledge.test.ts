@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultGameState, migrateGameState, toGameView } from "../src/domain/default-state.js";
+import { defaultGameState, migrateGameState, toGameView, MIGRATION_KEY } from "../src/domain/default-state.js";
 import { applyStateDiff } from "../src/domain/diff.js";
 
 const options = (key: string) => ({
@@ -97,14 +97,19 @@ describe("player-known map, people, and compendium state", () => {
 
   it("migrates legacy player knowledge into safe typed records without carrying secrets or completion flags", () => {
     const legacy = defaultGameState("legacy");
+    legacy.schemaVersion = "6.7.7-mcp.5.2";
+    legacy.version = "6.7.7-mcp.5.2";
+    delete (legacy.engine.migrations as Record<string, unknown>)[MIGRATION_KEY];
     legacy.map = [{ id: "old-map", name: "舊村", visited: true, progress: 90 }];
     legacy.npcs = [{ id: "old-npc", name: "舊居民", affinity: 20, secret: "不可顯示", transcript: "逐字稿" }];
     legacy.compendium = [{ id: "old-entry", name: "舊傳聞", unlocked: true, playerNotes: "舊筆記" }];
     const migrated = migrateGameState(legacy);
-    expect(migrated.map[0]).toEqual({ mapId: "old-map", name: "舊村", kind: "place", discovery: "visited" });
-    expect(migrated.npcs[0]).toEqual({ npcId: "old-npc", name: "舊居民", familiarity: "met", relationship: 20 });
+    expect(migrated.map[0]).toMatchObject({ mapId: "old-map", name: "舊村", kind: "place", discovery: "visited" });
+    expect(migrated.npcs[0]).toMatchObject({
+      npcId: "old-npc", name: "舊居民", familiarity: "met", relationship: { label: "既有關係紀錄 20" },
+    });
     expect(migrated.compendium[0]).toMatchObject({
-      entryId: "old-entry", name: "舊傳聞", category: "other", stage: "identified", confidence: "high",
+      entryId: "old-entry", name: "舊傳聞", category: "other", categoryLabel: "其他", stage: "identified", facts: [],
     });
     expect(JSON.stringify(migrated)).not.toContain("不可顯示");
     expect(JSON.stringify(migrated)).not.toContain("逐字稿");

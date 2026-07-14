@@ -3,6 +3,11 @@ import type { GameState, JsonObject, JsonValue } from "./types.js";
 import { isItemCategory } from "./inventory.js";
 import { collectEquipmentModifiers } from "./equipment.js";
 import { validateKnowledgeState } from "./knowledge.js";
+import { validateClockState, calendarOf } from "./clock.js";
+import { validateHistoryState } from "./history.js";
+import { validateQuestReferences, validateQuestState } from "./quests.js";
+import { SCHEMA_VERSION } from "./default-state.js";
+import { assertNoPrivateStateFields } from "./metadata.js";
 
 const GAME_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
@@ -57,6 +62,23 @@ export function validateGameState(state: GameState, maxBytes: number): void {
   assertGameId(state.gameId);
   assertSafeJson(state as unknown, "game state", maxBytes);
 
+  if (state.schemaVersion !== SCHEMA_VERSION) {
+    throw new AegisError("INVALID_STATE", `schemaVersion 必須是 ${SCHEMA_VERSION}。`);
+  }
+  try {
+    assertNoPrivateStateFields(state, "GameState");
+  } catch (error) {
+    if (error instanceof AegisError) {
+      throw new AegisError("INVALID_STATE", error.message);
+    }
+    throw error;
+  }
+  for (const forbidden of ["privateWorld", "privateState", "npcPrivateState", "secrets"] as const) {
+    if (forbidden in (state as unknown as Record<string, unknown>)) {
+      throw new AegisError("INVALID_STATE", `玩家 GameState 不得包含私密欄位 ${forbidden}。`);
+    }
+  }
+
   if (!Number.isInteger(state.revision) || state.revision < 0) {
     throw new AegisError("INVALID_STATE", "revision 必須是非負整數。");
   }
@@ -91,7 +113,12 @@ export function validateGameState(state: GameState, maxBytes: number): void {
       throw new AegisError("INVALID_STATE", `history.${key} 必須是陣列。`);
     }
   }
+  validateClockState(state);
+  validateQuestState(state);
   validateKnowledgeState(state);
+  validateQuestReferences(state);
+  validateHistoryState(state);
+  validateServerMetadata(state);
 
   state.inventory.forEach((item, index) => {
     if (!isObject(item)) throw new AegisError("INVALID_STATE", `inventory[${index}] 必須是物件。`);
@@ -288,6 +315,46 @@ export function validateGameState(state: GameState, maxBytes: number): void {
         throw new AegisError("INVALID_STATE", `player.equipment.${slot} 耐久度超出範圍。`);
       }
     }
+  }
+}
+
+function validateServerMetadata(state: GameState): void {
+  const calendar = calendarOf(state);
+  const revisionKeys = /^(firstLearnedAt|lastUpdatedAt|lastVerifiedAt|learnedAt|createdAt|observedAt)Revision$/u;
+  const gameTimeKeys = /^(firstLearnedAt|lastUpdatedAt|lastVerifiedAt|learnedAt|createdAt|observedAt)GameTime$/u;
+  const walk = (value: JsonValue, path: string): void => {
+    if (Array.isArray(value)) {
+      value.forEach((child, index) => walk(child, `${path}[${index}]`));
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      const childPath = `${path}.${key}`;
+      if (revisionKeys.test(key)) {
+        if (typeof child !== "number" || !Number.isInteger(child) || child < 0 || child > state.revision) {
+          throw new AegisError("INVALID_STATE", `${childPath} 必須是有效的伺服器 revision。`);
+        }
+      } else if (gameTimeKeys.test(key)) {
+        validateGameTimeSnapshot(child, childPath, calendar);
+      }
+      walk(child, childPath);
+    }
+  };
+  walk(state as unknown as JsonValue, "game");
+}
+
+function validateGameTimeSnapshot(
+  value: JsonValue,
+  path: string,
+  calendar: ReturnType<typeof calendarOf>,
+): void {
+  if (!isObject(value)) throw new AegisError("INVALID_STATE", `${path} 必須是遊戲時間快照。`);
+  const month = calendar.months.find((candidate) => candidate.monthId === value.monthId);
+  if (typeof value.year !== "number" || !Number.isInteger(value.year) || value.year < 0 ||
+    !month || typeof value.day !== "number" || !Number.isInteger(value.day) || value.day < 1 || value.day > month.days ||
+    typeof value.minuteOfDay !== "number" || !Number.isInteger(value.minuteOfDay) || value.minuteOfDay < 0 ||
+    value.minuteOfDay >= calendar.hoursPerDay * calendar.minutesPerHour) {
+    throw new AegisError("INVALID_STATE", `${path} 不是有效的遊戲時間快照。`);
   }
 }
 

@@ -1,6 +1,9 @@
 import type {
   DashboardClaim,
   GameState,
+  MigrationBackup,
+  MigrationCommit,
+  PrivateWorldState,
   SaveRecord,
   SaveSummary,
   TurnRecord,
@@ -11,6 +14,11 @@ export interface GameStore {
   createGame(state: GameState): Promise<GameState>;
   getGame(gameId: string): Promise<GameState | null>;
   compareAndSwap(gameId: string, expectedRevision: number, next: GameState): Promise<GameState>;
+  createMigrationBackup(backup: MigrationBackup): Promise<MigrationBackup>;
+  commitMigration(migration: MigrationCommit): Promise<GameState>;
+  getPrivateWorld(gameId: string): Promise<PrivateWorldState | null>;
+  putPrivateWorld(state: PrivateWorldState): Promise<PrivateWorldState>;
+  listMigrationBackups(gameId: string): Promise<MigrationBackup[]>;
   beginTurn(turn: TurnRecord): Promise<TurnRecord>;
   claimDashboard(gameId: string, turnId?: string): Promise<DashboardClaim>;
   createSave(save: SaveRecord): Promise<SaveRecord>;

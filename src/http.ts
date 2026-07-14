@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { mcpEndpointPath, type AppConfig } from "./config.js";
+import { APP_VERSION } from "./domain/default-state.js";
 import { createAegisMcpServer } from "./mcp/server.js";
 import type { AegisService } from "./service.js";
 import type { GameStore } from "./storage/store.js";
@@ -22,7 +23,7 @@ export async function startHttpServer(
 
     if (req.method === "GET" && (pathname === "/" || pathname === "/healthz")) {
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: true, service: "aegis-rpg", version: "0.5.2" }));
+      res.end(JSON.stringify({ ok: true, service: "aegis-rpg", version: APP_VERSION }));
       return;
     }
     if (config.enableLegacyAdmin && req.method === "GET" && pathname === "/admin") {

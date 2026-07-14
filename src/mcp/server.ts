@@ -6,15 +6,16 @@ import {
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { asAegisError } from "../domain/errors.js";
-import { toGameView } from "../domain/default-state.js";
+import { APP_VERSION, toGameView } from "../domain/default-state.js";
 import type { AegisService } from "../service.js";
 
-const WIDGET_URI = "ui://widget/aegis-dashboard-v6.html";
+const WIDGET_URI = "ui://widget/aegis-dashboard-v7.html";
 const LEGACY_WIDGET_URI = "ui://widget/aegis-dashboard-v1.html";
 const LEGACY_WIDGET_V2_URI = "ui://widget/aegis-dashboard-v2.html";
 const LEGACY_WIDGET_V3_URI = "ui://widget/aegis-dashboard-v3.html";
 const LEGACY_WIDGET_V4_URI = "ui://widget/aegis-dashboard-v4.html";
 const LEGACY_WIDGET_V5_URI = "ui://widget/aegis-dashboard-v5.html";
+const LEGACY_WIDGET_V6_URI = "ui://widget/aegis-dashboard-v6.html";
 const gameIdSchema = z
   .string()
   .min(1)
@@ -35,10 +36,10 @@ const resultOutputSchema = { result: z.record(z.unknown()) };
 
 export function createAegisMcpServer(service: AegisService, widgetHtml: string): McpServer {
   const server = new McpServer(
-    { name: "aegis-rpg", version: "0.5.2" },
+    { name: "aegis-rpg", version: APP_VERSION },
     {
       instructions:
-        "AEGIS State 是單一流動世界的唯一權威。每個玩家回合先靜默呼叫 aegis_prepare_turn，再依權威狀態判定；aegis_prepare_turn 與 aegis_get_game_state 都不得建立玩家可見面板。prepare_turn 會簽發伺服器端 turnId，但不改變遊戲 State 或 revision。若持久狀態改變，必須在敘述成既成事實前成功寫入；沒有真實變化時不得為了產生 revision 虛構修改。時間流逝一律呼叫 aegis_advance_time；旅行或長事件若同時改變位置、地圖、人物、圖鑑或任務，將這些 outcome_diff 與時間和生存結算放在同一原子交易。食用或飲用一律呼叫 aegis_use_item；事件造成飽食或補水變化使用 aegis_apply_survival_event；裝備與卸除只使用 aegis_equip_item / aegis_unequip_item；玩家重設只使用 aegis_reset_player。寫入衝突時重新 prepare，並只使用新回合的 turnId。新地點、新 NPC 或新知識必須先成功寫入，才能在敘述與面板中視為已發現。map 只保存玩家已知或聽聞地點，具有唯一 mapId；npcs 只保存玩家合理知道的資料，具有唯一 npcId，禁止秘密與逐字稿；compendium 只保存實際發現知識，具有唯一 entryId、漸進階段、來源與可信度，不保存人物個體或具體地點。不得自行虛構背包、金錢、能力、NPC 狀態、精確路線或世界全知事實。物品 category 必須且只能是 consumable、equipment、misc、special；全部只是介面檢視。每件實體物品必須有唯一 instanceId；已裝備實例不得留在 inventory。物品描述、結構化 effects 或 modifiers、acquisition 與限制必須分離；初始物品 acquisition.type 使用 initial_item。技能必須有單一 category、繁中 categoryLabel、分離的 description、effects、acquisition 與可選 tags；初始技能使用 initial_skill；unique 類別必須有 uniqueScope 與 uniqueHolderId 權威依據。未知欄位保持空缺，不得猜測或把規格示例當固定數值。AEGIS 僅自動保存，不向一般玩家提供建立、列出或讀取舊存檔。玩家可見內容全部使用繁體中文，不顯示內部 Diff、Revision、驗證或 Transaction。完成本回合所有必要寫入後，以 prepare_turn 回傳的 turnId 恰好呼叫一次 aegis_show_dashboard；伺服器會原子拒絕過期 turnId 與同一回合的第二次顯示。不得顯示中間狀態。頁籤切換完全由前端處理，不呼叫工具、不推進時間、不產生 revision。",
+        "AEGIS State 是單一流動世界的唯一權威。每回合先靜默呼叫 aegis_prepare_turn；prepare_turn 與 get_game_state 不顯示面板，只有 aegis_show_dashboard 可顯示綜合面板。prepare_turn 簽發 turnId 但不改 State 或 revision。持久狀態必須先成功寫入才能敘述為既成事實；沒有真實變化不得虛構 revision。時間流逝沿用 aegis_advance_time，新呼叫優先使用整數 elapsed_minutes；旅行的 GameClock、生存、player.location.mapId、地圖、單向路線、人物、任務、圖鑑與歷史必須放在同一 outcome_diff 原子提交，且 history 不得重複主要旅行事件。player.location.mapId 是唯一權威位置，文字路徑與 date/time/season 皆由伺服器衍生，禁止直接修改 clock 或 metadata。map 使用 mapId、routeId、facilityId、dangerId 並區分 parentMapId 階層、路線危險與地點危險。game.npcs 只保存玩家已知資料，使用 npcId、infoId、serviceId、memoryId；禁止秘密、私密動機與逐字稿。quests 使用 questId。compendium 使用 entryId、categoryLabel、stage，以及具 factId、sources、confidence 的 facts；不得保存人物個體或世界全知資料。歷史使用具 eventId 的結構化事件。食用飲用使用 aegis_use_item；生存事件使用 aegis_apply_survival_event；裝備只使用 equip/unequip；玩家重設只使用 reset_player。物品 category 只能是 consumable、equipment、misc、special，每件實體物品具有唯一 instanceId；技能使用單一 category、繁中 categoryLabel、effects 與 acquisition。AEGIS 僅自動保存，不提供玩家手動存讀檔。完成所有必要寫入後，以本回合 turnId 恰好呼叫一次 aegis_show_dashboard；舊客戶端若沒有 turn_id 欄位可只傳 game_id，由伺服器原子認領有效回合。所有頁籤、節點點擊、拖曳、縮放與列表切換皆為純前端操作，不呼叫工具、不推進時間、不新增 revision。",
     },
   );
 
@@ -95,6 +96,13 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     LEGACY_WIDGET_V5_URI,
     {},
     async () => dashboardResource(LEGACY_WIDGET_V5_URI),
+  );
+  registerAppResource(
+    server,
+    "aegis-dashboard-v6-compat",
+    LEGACY_WIDGET_V6_URI,
+    {},
+    async () => dashboardResource(LEGACY_WIDGET_V6_URI),
   );
 
   registerAppTool(
@@ -174,7 +182,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
         expected_revision: z.number().int().nonnegative().describe("aegis_prepare_turn 回傳的 revision。"),
         idempotency_key: idempotencySchema,
         diff: z.record(z.unknown()).describe(
-          "只含 world、player、inventory、npcs、compendium、map、quests、history 的差異。直接陣列代表完整替換，[] 代表清空。player.skills/inventory/quests/history.recent/history.major/history.summary 必須是陣列。物品 category 必須是 consumable/equipment/misc/special。map 條目必須有 mapId、name、kind(region/town/place/subplace)、discovery(heard/known/visited/surveyed)；路線只可引用已知 toMapId。npcs 條目必須有 npcId、name、familiarity(heard/met/acquainted/familiar/trusted)，只保存玩家已知資料，禁止秘密與逐字稿。compendium 條目必須有 entryId、name、category(creature/plant/material/magical_phenomenon/faction/culture/other)、stage(rumor/observed/identified/verified/researched)、confidence(low/medium/high/confirmed) 與至少一項 sources；不得保存人物個體或具體地點條目。未知資料不可虛構。",
+          "只含 world、player、inventory、npcs、compendium、map、quests、history。集合使用 replace/upsert/remove；直接陣列是完整替換。不得指定 player.clock/date/time/season 或伺服器 metadata。map 使用 mapId、kind、discovery；routes 使用 routeId/toMapId/estimatedMinutes/knowledgeStatus，facilities 與 knownDangers 使用穩定 ID。npcs 使用 npcId 與玩家已知的 relationship.label、location、knownInformation、services、memories。quests 使用 questId。compendium 使用 entryId/category/categoryLabel/stage/facts；每個 fact 需 factId、text、至少一項 sources 與 confidence。history 使用結構化事件。舊版 estimatedTravel、text、knownFacts 等欄位仍會在邊界正規化，但新呼叫應使用 v0.6.0 欄位。",
         ),
         turn_summary: z.string().max(500).optional().describe("本回合狀態變化的簡短摘要。"),
       },
@@ -238,16 +246,17 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
         game_id: gameIdSchema,
         expected_revision: z.number().int().nonnegative(),
         idempotency_key: idempotencySchema,
-        elapsed_hours: z.number().positive().max(720),
+        elapsed_minutes: z.number().int().positive().max(43_200).optional().describe("新呼叫使用的整數遊戲分鐘。不得與 elapsed_hours 同時提供。"),
+        elapsed_hours: z.number().positive().max(720).optional().describe("舊版相容欄位；新呼叫請改用 elapsed_minutes。"),
         activity: z.enum(["normal", "rest", "sleep", "travel", "combat", "running", "heavy_labor"]).default("normal"),
         environment: z.enum(["temperate", "hot", "cold"]).default("temperate"),
         reason: z.string().min(1).max(200),
         extra_hunger_cost: z.number().min(0).max(1000).default(0),
         extra_hydration_cost: z.number().min(0).max(1000).default(0),
-        new_date: z.string().max(100).optional(),
-        new_time: z.string().max(100).optional(),
+        new_date: z.string().max(100).optional().describe("舊版相容輸入；伺服器會忽略並由 GameClock 產生日期。"),
+        new_time: z.string().max(100).optional().describe("舊版相容輸入；伺服器會忽略並由 GameClock 產生時間。"),
         outcome_diff: z.record(z.unknown()).optional().describe(
-          "與本次時間事件在同一交易提交的結果，可含 world、player（不得含 survival/date/time）、inventory、npcs、compendium、map、quests；用於原子更新旅行目的地、新人物與新知識。map、npcs、compendium 使用與 aegis_apply_state_diff 相同的唯一 ID、玩家知識與來源規則。",
+          "與本次時間事件在同一交易提交的結果，可含 world、player（不得含 survival/clock/date/time/season）、inventory、npcs、compendium、map、quests，以及 history.append 的獨立事件；不得重複加入主要時間或旅行事件。",
         ),
       },
       outputSchema: resultOutputSchema,
@@ -259,6 +268,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
         input.game_id, input.expected_revision, input.idempotency_key, input.elapsed_hours,
         input.activity, input.environment, input.reason, input.extra_hunger_cost,
         input.extra_hydration_cost, input.new_date, input.new_time, input.outcome_diff,
+        input.elapsed_minutes,
       );
       return { ...result, game: toGameView(result.game), message: "時間、事件結果與生存狀態已原子結算，進度已自動保存。" };
     }),
@@ -409,7 +419,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     },
     async ({ game_id, turn_id }) => safeTool(async () => ({
       dashboard: await service.dashboard(game_id, turn_id),
-    })),
+    }), "AEGIS 綜合面板已依最新權威狀態產生。"),
   );
 
   return server;
@@ -431,12 +441,15 @@ function silentMeta(invoking: string, invoked: string) {
   };
 }
 
-async function safeTool(work: () => Promise<Record<string, unknown>>) {
+async function safeTool(
+  work: () => Promise<Record<string, unknown>>,
+  successText?: string,
+) {
   try {
     const result = await work();
     return {
       structuredContent: { result },
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
+      content: [{ type: "text" as const, text: successText ?? JSON.stringify(result) }],
     };
   } catch (error) {
     const aegisError = asAegisError(error);

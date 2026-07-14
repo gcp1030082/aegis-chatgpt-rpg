@@ -104,6 +104,41 @@
       .warning { color: var(--warning); }
       .autosave { margin-top: 10px; color: var(--good); font-size: 12px; }
       #status { min-height: 18px; margin: 8px 2px 0; color: var(--muted); font-size: 12px; }
+      .map-toolbar { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 10px; }
+      .map-toolbar button {
+        min-height: 38px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 10px;
+        background: var(--panel-3); color: var(--muted); cursor: pointer;
+      }
+      .map-toolbar button[aria-selected="true"] { color: var(--text); border-color: var(--accent); background: #29416f; font-weight: 750; }
+      .map-viewport {
+        position: relative; height: 390px; overflow: hidden; border: 1px solid var(--line); border-radius: 13px;
+        background: radial-gradient(circle at 50% 45%, #25375b 0, #101827 58%, #0c121e 100%);
+      }
+      .map-viewport[hidden], #map[hidden], .map-drawer[hidden] { display: none; }
+      .map-svg { width: 100%; height: 100%; display: block; touch-action: none; user-select: none; }
+      .map-hierarchy-line { stroke: #66738d; stroke-width: 1.4; stroke-dasharray: 4 5; opacity: .75; }
+      .map-route-line { stroke: #82a8ff; stroke-width: 2; opacity: .8; marker-end: url(#route-arrow); }
+      .map-route-line.heard { stroke-dasharray: 7 7; opacity: .55; }
+      .map-route-line.verified { stroke-width: 3; opacity: 1; }
+      .map-route-line.danger-high { stroke: #e48787; }
+      .map-route-danger { fill: #ffd0d0; font: 800 14px system-ui, sans-serif; paint-order: stroke; stroke: #101827; stroke-width: 3px; }
+      .map-node { cursor: pointer; outline: none; }
+      .map-node rect { fill: #202a3e; stroke: #64718b; stroke-width: 1.5; rx: 12; }
+      .map-node:hover rect, .map-node:focus rect { stroke: var(--accent); stroke-width: 2.5; }
+      .map-node.current rect { fill: #29416f; stroke: #9ebaff; stroke-width: 3; }
+      .map-node.heard rect { fill: #182131; stroke-dasharray: 5 4; }
+      .map-node text { fill: var(--text); font: 700 13px system-ui, sans-serif; pointer-events: none; }
+      .map-node .map-node-kind { fill: var(--muted); font-size: 10px; font-weight: 500; }
+      .map-node .map-node-flags { fill: #c6d5f5; font-size: 9px; font-weight: 650; }
+      .map-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; color: var(--muted); font-size: 11px; }
+      .map-legend span::before { content: ""; display: inline-block; width: 18px; margin-right: 5px; vertical-align: middle; border-top: 2px solid var(--accent); }
+      .map-legend .hierarchy::before { border-top-style: dashed; border-color: #66738d; }
+      .map-legend .heard-route::before { border-top-style: dashed; }
+      .map-drawer { margin-top: 9px; padding: 11px; border: 1px solid #4b5d83; border-radius: 12px; background: var(--panel-3); }
+      .map-drawer-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; margin-bottom: 7px; }
+      .map-drawer-actions { display: flex; gap: 6px; align-items: center; }
+      .map-drawer-title { font-weight: 800; }
+      .map-drawer button { min-width: 38px; min-height: 38px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); color: var(--text); }
       @media (max-width: 560px) {
         body { padding: 8px; }
         .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -112,6 +147,7 @@
         .hero { padding: 13px; }
         .entity summary { padding: 12px; }
         .primary-nav button { padding-inline: 7px; }
+        .map-viewport { height: 330px; }
       }
     </style>
   </head>
@@ -197,7 +233,20 @@
         <article class="card">
           <h2>地圖</h2>
           <p class="section-intro">只顯示已知或聽聞地點與權威路線；前往地點須在正常遊戲回合中提出。</p>
-          <div class="list" id="map"></div>
+          <div class="map-toolbar" role="group" aria-label="地圖檢視">
+            <button type="button" data-map-view="graph" aria-selected="true">節點地圖</button>
+            <button type="button" data-map-view="list" aria-selected="false">地點列表</button>
+            <button type="button" id="map-zoom-out" aria-label="縮小地圖">－</button>
+            <button type="button" id="map-zoom-in" aria-label="放大地圖">＋</button>
+            <button type="button" id="map-recenter">重新置中</button>
+            <button type="button" id="map-focus-current">回目前範圍</button>
+          </div>
+          <div class="map-viewport" id="map-graph" aria-label="玩家已知地點節點圖"></div>
+          <div class="list" id="map" hidden></div>
+          <div class="map-legend" id="map-legend">
+            <span class="hierarchy">空間階層</span><span>已知單向路線</span><span class="heard-route">聽聞路線</span>
+          </div>
+          <div class="map-drawer" id="map-drawer" hidden></div>
         </article>
       </section>
       <section class="panel" id="panel-people">
@@ -226,6 +275,12 @@
       let skillCategory = "all";
       let compendiumItems = [];
       let compendiumCategory = "all";
+      let mapView = "graph";
+      let mapEntriesCache = [];
+      let mapLocationCache = {};
+      let mapTransform = { x: 0, y: 0, scale: 1 };
+      let mapFocusId = "";
+      let selectedMapId = "";
       let renderedDashboardKey = "";
       const latestRevisionByGame = new Map();
       let rpcId = 0;
@@ -254,7 +309,7 @@
       }, { passive: true });
 
       const bridgeReady = request("ui/initialize", {
-        appInfo: { name: "aegis-dashboard", version: "0.5.2" },
+        appInfo: { name: "aegis-dashboard", version: "0.6.0" },
         appCapabilities: {},
         protocolVersion: "2026-01-26",
       }).then(() => notify("ui/notifications/initialized", {}));
@@ -295,7 +350,8 @@
         $("world-title").textContent = [world.name || game.title, world.genre].filter(Boolean).join("｜");
         $("player-name").textContent = player.name || "未建立角色";
         $("player-role").textContent = [player.race, player.role || player.profession || player.identity || player.class].filter(Boolean).join("・") || "—";
-        $("player-location").textContent = [
+        const authoritativePath = normalizeCollection(asRecord(game.mapIndex).currentPath).map(item => item.name).filter(present).join(" › ");
+        $("player-location").textContent = authoritativePath || [
           location.region || player.region,
           location.location || player.place,
           location.sublocation || player.sublocation,
@@ -580,36 +636,306 @@
       }
 
       function renderMap(root, entries, playerLocation) {
+        mapEntriesCache = entries.slice(0, 40);
+        mapLocationCache = asRecord(playerLocation);
+        mapTransform = { x: 0, y: 0, scale: 1 };
+        mapFocusId = String(mapLocationCache.mapId || "");
+        selectedMapId = "";
+        $("map-drawer").hidden = true;
+        renderMapView();
+      }
+
+      function renderMapView() {
+        const graph = $("map-graph");
+        const list = $("map");
+        const graphMode = mapView === "graph";
+        graph.hidden = !graphMode;
+        list.hidden = graphMode;
+        $("map-legend").hidden = !graphMode;
+        $("map-recenter").hidden = !graphMode;
+        $("map-focus-current").hidden = !graphMode;
+        $("map-zoom-out").hidden = !graphMode;
+        $("map-zoom-in").hidden = !graphMode;
+        document.querySelectorAll("[data-map-view]").forEach(button =>
+          button.setAttribute("aria-selected", String(button.dataset.mapView === mapView)));
+        if (graphMode) renderMapGraph(graph, localMapEntries(mapEntriesCache, mapFocusId), mapLocationCache);
+        else renderMapList(list, mapEntriesCache, mapLocationCache);
+      }
+
+      function localMapEntries(entries, focusId) {
+        if (!focusId || entries.length <= 1) return entries;
+        const byId = new Map(entries.map(item => [String(item.mapId || ""), item]));
+        const focus = byId.get(focusId);
+        if (!focus) return entries;
+        const included = new Set([focusId]);
+        const include = id => { if (id && byId.has(String(id))) included.add(String(id)); };
+        include(focus.parentMapId);
+        let ancestor = focus;
+        while (ancestor?.parentMapId) {
+          include(ancestor.parentMapId);
+          ancestor = byId.get(String(ancestor.parentMapId));
+        }
+        for (const item of entries) {
+          if (item.parentMapId === focusId || (focus.parentMapId && item.parentMapId === focus.parentMapId)) include(item.mapId);
+          for (const route of normalizeCollection(item.routes)) {
+            if (item.mapId === focusId) include(route.toMapId);
+            if (route.toMapId === focusId) include(item.mapId);
+          }
+        }
+        return entries.filter(item => included.has(String(item.mapId || "")));
+      }
+
+      function renderMapList(root, entries, playerLocation) {
         root.replaceChildren();
         const byId = new Map(entries.map(item => [String(item.mapId || ""), item]));
         const currentMapId = String(playerLocation.mapId || "");
-        const currentName = formatPlayerLocation(playerLocation, byId);
-        root.append(row("目前位置", "", currentName));
-        if (!entries.length) {
-          root.append(el("div", "empty", "尚無已知或聽聞地點"));
-          return;
-        }
-        const ordered = [...entries].sort((left, right) => mapDepth(left, byId) - mapDepth(right, byId));
+        root.append(row("目前位置", "", formatPlayerLocation(playerLocation, byId)));
+        if (!entries.length) return root.append(el("div", "empty", "尚無已知或聽聞地點"));
+        const ordered = [...entries].sort((left, right) => mapDepth(left, byId) - mapDepth(right, byId) || String(left.mapId).localeCompare(String(right.mapId)));
         for (const item of ordered) {
           const mapId = String(item.mapId || "");
           const current = mapId && mapId === currentMapId;
-          const routes = formatRoutes(item.routes, byId);
-          const facilities = formatFacilities(item.facilities);
           root.append(expandable({
             title: String(item.name || "未命名地點"),
             badge: current ? "目前位置" : discoveryLabel(item.discovery),
             note: [mapPath(item, byId), item.description].filter(present).map(display).join("・") || "已記錄地點",
-            fields: [
-              field("地點層級", mapKindLabel(item.kind), true),
-              field("得知狀態", discoveryLabel(item.discovery), true),
-              field("所屬位置", mapPath(item, byId)),
-              field("已知設施", facilities, false, true),
-              field("已知路線", routes || "尚無權威路線資料", true, true),
-              field("地點資訊", item.description, false, true),
-            ],
+            fields: mapDetailFields(item, byId),
             extras: [],
           }));
         }
+      }
+
+      function renderMapGraph(root, entries, playerLocation) {
+        root.replaceChildren();
+        if (!entries.length) return root.append(el("div", "empty", "尚無已知或聽聞地點"));
+        const byId = new Map(entries.map(item => [String(item.mapId || ""), item]));
+        const currentMapId = String(playerLocation.mapId || "");
+        const centerMapId = byId.has(currentMapId) ? currentMapId : String(mapFocusId || "");
+        const svg = svgEl("svg");
+        svg.classList.add("map-svg");
+        svg.setAttribute("role", "img");
+        svg.setAttribute("aria-label", `局部節點地圖，目前位置：${formatPlayerLocation(playerLocation, byId)}`);
+        const defs = svgEl("defs");
+        const marker = svgEl("marker");
+        marker.setAttribute("id", "route-arrow");
+        marker.setAttribute("markerWidth", "8");
+        marker.setAttribute("markerHeight", "8");
+        marker.setAttribute("refX", "7");
+        marker.setAttribute("refY", "3");
+        marker.setAttribute("orient", "auto");
+        const arrow = svgEl("path");
+        arrow.setAttribute("d", "M0,0 L0,6 L7,3 z");
+        arrow.setAttribute("fill", "#82a8ff");
+        marker.append(arrow);
+        defs.append(marker);
+        const viewport = svgEl("g");
+        const hierarchyLayer = svgEl("g");
+        const routeLayer = svgEl("g");
+        const nodeLayer = svgEl("g");
+        const positions = new Map(entries.map(item => [String(item.mapId || ""), stableMapPosition(item, byId)]));
+
+        for (const item of entries) {
+          const id = String(item.mapId || "");
+          const position = positions.get(id);
+          const parentPosition = positions.get(String(item.parentMapId || ""));
+          if (position && parentPosition) hierarchyLayer.append(mapLine(parentPosition, position, "map-hierarchy-line"));
+          for (const route of normalizeCollection(item.routes)) {
+            const targetPosition = positions.get(String(route.toMapId || ""));
+            if (!position || !targetPosition) continue;
+            const status = route.knowledgeStatus === "heard" ? "heard" : route.knowledgeStatus === "verified" ? "verified" : "known";
+            const danger = route.danger === "high" || route.danger === "extreme" ? " danger-high" : "";
+            routeLayer.append(mapLine(position, targetPosition, `map-route-line ${status}${danger}`, true));
+            if (danger) routeLayer.append(mapRouteDanger(position, targetPosition));
+          }
+        }
+
+        for (const item of entries) {
+          const id = String(item.mapId || "");
+          const position = positions.get(id);
+          if (!position) continue;
+          const group = svgEl("g");
+          group.classList.add("map-node");
+          if (id === currentMapId) group.classList.add("current");
+          if (item.discovery === "heard") group.classList.add("heard");
+          group.dataset.mapId = id;
+          group.setAttribute("transform", `translate(${position.x} ${position.y})`);
+          group.setAttribute("tabindex", "0");
+          group.setAttribute("role", "button");
+          group.setAttribute("aria-label", `${item.name || "未命名地點"}，${id === currentMapId ? "目前位置" : discoveryLabel(item.discovery)}`);
+          const rect = svgEl("rect");
+          rect.setAttribute("width", "144");
+          rect.setAttribute("height", "68");
+          const title = svgEl("text");
+          title.setAttribute("x", "12");
+          title.setAttribute("y", "23");
+          title.textContent = truncateMapLabel(String(item.name || "未命名地點"));
+          const kind = svgEl("text");
+          kind.classList.add("map-node-kind");
+          kind.setAttribute("x", "12");
+          kind.setAttribute("y", "40");
+          kind.textContent = `${mapKindLabel(item.kind)}・${discoveryLabel(item.discovery)}`;
+          const flags = svgEl("text");
+          flags.classList.add("map-node-flags");
+          flags.setAttribute("x", "12");
+          flags.setAttribute("y", "56");
+          flags.textContent = mapNodeFlags(item, id === currentMapId);
+          const open = () => showMapDrawer(id, byId);
+          group.addEventListener("click", open);
+          group.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
+          });
+          group.append(rect, title, kind, flags);
+          nodeLayer.append(group);
+        }
+
+        viewport.append(hierarchyLayer, routeLayer, nodeLayer);
+        svg.append(defs, viewport);
+        root.append(svg);
+        installMapPanZoom(svg, viewport);
+        centerMapGraph(root, viewport, positions, centerMapId);
+      }
+
+      function stableMapPosition(item, byId) {
+        const id = String(item.mapId || "unknown");
+        const hash = stableStringHash(id);
+        const depth = mapDepth(item, byId);
+        return {
+          x: 70 + depth * 185 + ((hash >>> 8) % 3) * 25,
+          y: 55 + (hash % 19) * 76,
+        };
+      }
+
+      function stableStringHash(value) {
+        let hash = 2166136261;
+        for (let index = 0; index < value.length; index += 1) {
+          hash ^= value.charCodeAt(index);
+          hash = Math.imul(hash, 16777619);
+        }
+        return hash >>> 0;
+      }
+
+      function mapLine(from, to, className, directed = false) {
+        const line = svgEl("line");
+        line.setAttribute("x1", String(from.x + 72));
+        line.setAttribute("y1", String(from.y + 34));
+        line.setAttribute("x2", String(to.x + (directed ? 2 : 72)));
+        line.setAttribute("y2", String(to.y + 34));
+        line.setAttribute("class", className);
+        return line;
+      }
+
+      function mapRouteDanger(from, to) {
+        const warning = svgEl("text");
+        warning.setAttribute("x", String((from.x + to.x) / 2 + 72));
+        warning.setAttribute("y", String((from.y + to.y) / 2 + 27));
+        warning.setAttribute("class", "map-route-danger");
+        warning.textContent = "⚠";
+        return warning;
+      }
+
+      function mapNodeFlags(item, current) {
+        const flags = [];
+        if (current) flags.push("目前");
+        if (normalizeCollection(item.facilities).length) flags.push("設施");
+        if (normalizeCollection(asRecord(item.referenceLabels).quests).length) flags.push("任務");
+        if (normalizeCollection(item.knownDangers).length) flags.push("危險");
+        return flags.length ? flags.join("・") : "無額外標記";
+      }
+
+      function installMapPanZoom(svg, viewport) {
+        let drag = null;
+        svg.onpointerdown = event => {
+          if (event.target.closest?.(".map-node")) return;
+          drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+          svg.setPointerCapture(event.pointerId);
+        };
+        svg.onpointermove = event => {
+          if (!drag || drag.id !== event.pointerId) return;
+          mapTransform.x += event.clientX - drag.x;
+          mapTransform.y += event.clientY - drag.y;
+          drag = { id: drag.id, x: event.clientX, y: event.clientY };
+          applyMapTransform(viewport);
+        };
+        svg.onpointerup = svg.onpointercancel = event => {
+          if (drag?.id === event.pointerId) drag = null;
+        };
+        svg.onwheel = event => {
+          event.preventDefault();
+          zoomMap(viewport, event.deltaY < 0 ? 1.12 : 0.89, event.offsetX, event.offsetY);
+        };
+      }
+
+      function zoomMap(viewport, factor, originX, originY) {
+        const previous = mapTransform.scale;
+        const next = Math.min(2.2, Math.max(.55, previous * factor));
+        mapTransform.x = originX - (originX - mapTransform.x) * (next / previous);
+        mapTransform.y = originY - (originY - mapTransform.y) * (next / previous);
+        mapTransform.scale = next;
+        applyMapTransform(viewport);
+      }
+
+      function applyMapTransform(viewport) {
+        viewport.setAttribute("transform", `translate(${mapTransform.x} ${mapTransform.y}) scale(${mapTransform.scale})`);
+      }
+
+      function centerMapGraph(root, viewport, positions, currentMapId) {
+        const target = positions.get(currentMapId) || positions.values().next().value || { x: 0, y: 0 };
+        const bounds = root.getBoundingClientRect();
+        mapTransform = { x: bounds.width / 2 - (target.x + 72), y: bounds.height / 2 - (target.y + 34), scale: 1 };
+        applyMapTransform(viewport);
+      }
+
+      function recenterMap() {
+        if (mapView !== "graph") return;
+        renderMapGraph($("map-graph"), localMapEntries(mapEntriesCache, mapFocusId), mapLocationCache);
+      }
+
+      function showMapDrawer(mapId, byId) {
+        selectedMapId = mapId;
+        const item = byId.get(mapId);
+        if (!item) return;
+        const drawer = $("map-drawer");
+        drawer.replaceChildren();
+        const head = el("div", "map-drawer-head");
+        const heading = el("div", "");
+        heading.append(el("div", "map-drawer-title", String(item.name || "未命名地點")), el("div", "note", mapPath(item, byId)));
+        const close = el("button", "", "×");
+        close.type = "button";
+        close.setAttribute("aria-label", "關閉地點詳情");
+        close.addEventListener("click", () => { selectedMapId = ""; drawer.hidden = true; });
+        const focus = el("button", "", "查看此處範圍");
+        focus.type = "button";
+        focus.addEventListener("click", () => {
+          mapFocusId = mapId;
+          renderMapView();
+        });
+        const actions = el("div", "map-drawer-actions");
+        actions.append(focus, close);
+        head.append(heading, actions);
+        const details = el("div", "detail-grid");
+        for (const fieldValue of mapDetailFields(item, byId)) {
+          if (!fieldValue.always && !present(fieldValue.value)) continue;
+          const box = el("div", `detail${fieldValue.wide ? " wide" : ""}`);
+          box.append(el("div", "detail-label", fieldValue.label), el("div", "detail-value", present(fieldValue.value) ? display(fieldValue.value) : "尚未記錄"));
+          details.append(box);
+        }
+        drawer.append(head, details);
+        drawer.hidden = false;
+      }
+
+      function mapDetailFields(item, byId) {
+        return [
+          field("地點層級", mapKindLabel(item.kind), true),
+          field("得知狀態", discoveryLabel(item.discovery), true),
+          field("所屬位置", mapPath(item, byId)),
+          field("已知設施", formatFacilities(item.facilities), false, true),
+          field("地點危險", formatKnownDangers(item.knownDangers), false, true),
+          field("已知路線", formatRoutes(item.routes, byId) || "尚無權威路線資料", true, true),
+          field("相關人物", formatResolvedNames(asRecord(item.referenceLabels).npcs), false, true),
+          field("相關任務", formatResolvedNames(asRecord(item.referenceLabels).quests), false, true),
+          field("相關圖鑑", formatResolvedNames(asRecord(item.referenceLabels).compendium), false, true),
+          field("地點資訊", item.description, false, true),
+        ];
       }
 
       function renderPeople(root, people, mapEntries) {
@@ -624,16 +950,16 @@
           root.append(expandable({
             title: String(person.name || "未命名人物"),
             badge: familiarityLabel(person.familiarity),
-            note: [person.identity, formatNpcLocation(location, mapById)].filter(present).map(display).join("・") || "已知人物",
+            note: [person.identity, person.locationSummary || formatNpcLocation(location, mapById)].filter(present).map(display).join("・") || "已知人物",
             fields: [
               field("身份", person.identity),
               field("熟悉程度", familiarityLabel(person.familiarity), true),
-              field("關係", person.relationship),
-              field(location.status === "current" ? "目前位置" : "最後已知位置", formatNpcLocation(location, mapById)),
+              field("關係", person.relationshipLabel || asRecord(person.relationship).label),
+              field(location.status === "current" ? "目前位置" : "最後已知位置", person.locationSummary || formatNpcLocation(location, mapById)),
               field("已知情報", information, false, true),
               field("可用服務", services, false, true),
               field("重要互動記憶", memories, false, true),
-              field("任務關聯", Array.isArray(person.questIds) && person.questIds.length ? `${person.questIds.length} 項已知關聯` : undefined),
+              field("任務關聯", formatResolvedNames(person.questNames), false, true),
             ],
             extras: [],
           }));
@@ -649,7 +975,7 @@
           const id = String(entry.category || "other");
           if (seen.has(id)) continue;
           seen.add(id);
-          categories.push({ id, label: compendiumCategoryLabel(id) });
+          categories.push({ id, label: entry.categoryLabel || compendiumCategoryLabel(id) });
         }
         if (compendiumCategory !== "all" && !seen.has(compendiumCategory)) compendiumCategory = "all";
         for (const category of [{ id: "all", label: "全部" }, ...categories]) {
@@ -683,14 +1009,15 @@
           root.append(expandable({
             title: String(entry.name || "未命名條目"),
             badge: knowledgeStageLabel(entry.stage),
-            note: [compendiumCategoryLabel(entry.category), entry.description].filter(present).map(display).join("・") || "已收錄知識",
+            note: [entry.categoryLabel || compendiumCategoryLabel(entry.category), entry.summary].filter(present).map(display).join("・") || "已收錄知識",
             fields: [
-              field("分類", compendiumCategoryLabel(entry.category), true),
+              field("分類", entry.categoryLabel || compendiumCategoryLabel(entry.category), true),
               field("研究階段", knowledgeStageLabel(entry.stage), true),
-              field("可信程度", confidenceLabel(entry.confidence), true),
-              field("已知內容", entry.description, false, true),
-              field("已知事實", formatStringList(entry.knownFacts), false, true),
-              field("知識來源", formatKnowledgeSources(entry.sources), true, true),
+              field("摘要", entry.summary, false, true),
+              field("已知事實", formatCompendiumFacts(entry.facts), false, true),
+              field("相關地點", formatResolvedNames(asRecord(entry.relatedNames).maps), false, true),
+              field("相關人物", formatResolvedNames(asRecord(entry.relatedNames).npcs), false, true),
+              field("相關任務", formatResolvedNames(asRecord(entry.relatedNames).quests), false, true),
               field("次級標籤", formatStringList(entry.tags), false, true),
             ],
             extras: [],
@@ -734,7 +1061,9 @@
           const route = asRecord(raw);
           const target = byId.get(String(route.toMapId || ""));
           const details = [];
-          if (present(route.estimatedTravel)) details.push(`預估時間：${display(route.estimatedTravel)}`);
+          if (Number.isInteger(route.estimatedMinutes)) details.push(`預估時間：${formatTravelMinutes(route.estimatedMinutes)}`);
+          if (present(route.travelMode)) details.push(`方式：${travelModeLabel(route.travelMode)}`);
+          if (present(route.knowledgeStatus)) details.push(`路線情報：${routeKnowledgeLabel(route.knowledgeStatus)}`);
           if (present(route.danger)) details.push(`危險：${dangerLabel(route.danger)}`);
           if (Array.isArray(route.conditions) && route.conditions.length) details.push(`狀況：${formatStringList(route.conditions)}`);
           if (Array.isArray(route.requirements) && route.requirements.length) details.push(`條件：${formatStringList(route.requirements)}`);
@@ -752,6 +1081,16 @@
         }).filter(present).join("、");
       }
 
+      function formatKnownDangers(value) {
+        if (!Array.isArray(value) || !value.length) return undefined;
+        return value.map(raw => {
+          const danger = asRecord(raw);
+          const details = [danger.name, present(danger.severity) ? dangerLabel(danger.severity) : "", danger.description];
+          if (danger.confirmed === true) details.push("已確認");
+          return details.filter(present).map(display).join("｜");
+        }).filter(present).join("\n");
+      }
+
       function formatNpcLocation(location, mapById) {
         const mapped = mapById.get(String(location.mapId || ""));
         const name = mapped?.name || location.name;
@@ -763,16 +1102,16 @@
         if (!Array.isArray(value) || !value.length) return undefined;
         return value.map(raw => {
           const info = asRecord(raw);
-          const parts = [info.text];
+          const parts = [info.content || info.text];
           if (present(info.confidence)) parts.push(`可信程度：${confidenceLabel(info.confidence)}`);
-          if (present(info.source)) parts.push(`來源：${formatKnowledgeSource(info.source)}`);
+          if (present(info.sourceType)) parts.push(`來源：${sourceTypeLabel(info.sourceType)}`);
           return parts.filter(present).map(display).join("｜");
         }).join("\n");
       }
 
       function formatServices(value) {
         if (!Array.isArray(value) || !value.length) return undefined;
-        return value.map(raw => typeof raw === "string" ? raw : [asRecord(raw).name, asRecord(raw).conditions].filter(present).map(display).join("｜")).join("、");
+        return value.map(raw => typeof raw === "string" ? raw : [asRecord(raw).name, asRecord(raw).conditions, asRecord(raw).availability].filter(present).map(display).join("｜")).join("、");
       }
 
       function formatMemories(value) {
@@ -788,13 +1127,44 @@
       function formatKnowledgeSource(raw) {
         if (typeof raw === "string") return raw;
         const source = asRecord(raw);
-        const typeLabels = {
-          rumor: "傳聞", observation: "親自觀察", identification: "辨識", research: "研究",
-          npc: "人物告知", document: "文件", event: "事件", recorded_source: "既有紀錄",
-          legacy_record: "既有紀錄",
-        };
-        const type = typeLabels[source.type] || "知識來源";
-        return present(source.name) ? `${type}：${display(source.name)}` : type;
+        const type = sourceTypeLabel(source.sourceType || source.type);
+        return present(source.description) ? `${type}：${display(source.description)}` : type;
+      }
+
+      function sourceTypeLabel(value) {
+        return {
+          rumor: "傳聞", npc: "人物告知", observation: "親自觀察", skill: "技能辨識",
+          book: "書籍", document: "文件", experiment: "實驗", quest: "任務", other: "其他來源",
+        }[value] || "知識來源";
+      }
+
+      function formatCompendiumFacts(value) {
+        if (!Array.isArray(value) || !value.length) return "目前只有條目摘要，尚無已確認知識細節";
+        return value.map(raw => {
+          const fact = asRecord(raw);
+          return `${fact.text || "未命名知識"}｜可信程度：${confidenceLabel(fact.confidence)}｜來源：${formatKnowledgeSources(fact.sources)}`;
+        }).join("\n");
+      }
+
+      function formatResolvedNames(value) {
+        if (!Array.isArray(value) || !value.length) return undefined;
+        return value.map(raw => typeof raw === "string" ? raw : asRecord(raw).name).filter(present).map(display).join("、");
+      }
+
+      function formatTravelMinutes(value) {
+        const minutes = Math.max(0, Math.round(Number(value) || 0));
+        const hours = Math.floor(minutes / 60);
+        const remainder = minutes % 60;
+        if (hours && remainder) return `${hours} 小時 ${remainder} 分鐘`;
+        return hours ? `${hours} 小時` : `${remainder} 分鐘`;
+      }
+
+      function travelModeLabel(value) {
+        return { walk: "步行", ride: "騎乘", boat: "乘船", other: "其他" }[value] || "未記錄";
+      }
+
+      function routeKnowledgeLabel(value) {
+        return { heard: "聽聞", known: "已知", verified: "已驗證" }[value] || "已知";
       }
 
       function formatStringList(value) {
@@ -1077,7 +1447,20 @@
       function renderHistory(root, items) {
         root.replaceChildren();
         if (!items.length) return root.append(el("div", "empty", "尚無事件紀錄"));
-        items.slice().reverse().forEach((item, index) => root.append(row(`事件 ${items.length - index}`, "", display(item))));
+        items.slice().reverse().forEach(item => {
+          const event = asRecord(item);
+          const text = typeof item === "string" ? item : event.displayText || "發生了一項尚未分類的事件。";
+          root.append(row(historyTypeLabel(event.type), "", text));
+        });
+      }
+
+      function historyTypeLabel(type) {
+        return {
+          general: "事件", time_elapsed: "時間流逝", travel: "旅行", item_used: "使用物品",
+          survival_changed: "生存狀態", quest_changed: "任務更新", location_discovered: "發現地點",
+          npc_met: "遇見人物", npc_information_learned: "取得情報", npc_location_updated: "人物位置",
+          compendium_updated: "圖鑑更新", container_refilled: "補充容器", equipment_changed: "裝備更新",
+        }[type] || "事件";
       }
 
       function renderEntities(root, items, emptyText, map) {
@@ -1101,6 +1484,9 @@
         if (text !== undefined) node.textContent = text;
         return node;
       }
+
+      function svgEl(tag) { return document.createElementNS("http://www.w3.org/2000/svg", tag); }
+      function truncateMapLabel(value) { return value.length > 10 ? `${value.slice(0, 9)}…` : value; }
 
       function asRecord(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
 
@@ -1144,11 +1530,14 @@
           requirements: "使用條件", equipmentSlot: "裝備欄位", equipmentSlots: "可裝備欄位",
           strength: "力量", dexterity: "敏捷", constitution: "體質", intelligence: "智力", wisdom: "感知", charisma: "魅力",
           vitality: "活力", agility: "靈巧", endurance: "耐力", spirit: "精神", luck: "幸運",
-          mapId: "地圖識別碼", npcId: "人物識別碼", entryId: "圖鑑識別碼", kind: "地點層級",
-          parentMapId: "上層地點", discovery: "得知狀態", routes: "已知路線", facilities: "設施",
+          mapId: "地圖識別碼", routeId: "路線識別碼", facilityId: "設施識別碼", dangerId: "危險識別碼",
+          npcId: "人物識別碼", infoId: "情報識別碼", serviceId: "服務識別碼", memoryId: "記憶識別碼",
+          questId: "任務識別碼", entryId: "圖鑑識別碼", factId: "知識識別碼", kind: "地點層級",
+          parentMapId: "上層地點", discovery: "得知狀態", routes: "已知路線", facilities: "設施", knownDangers: "地點危險",
           identity: "身份", familiarity: "熟悉程度", relationship: "關係", knownInformation: "已知情報",
           services: "服務", memories: "重要互動", stage: "研究階段", confidence: "可信程度",
-          knownFacts: "已知事實", sources: "知識來源", estimatedTravel: "預估時間", danger: "危險程度",
+          facts: "已知事實", sources: "知識來源", estimatedMinutes: "預估分鐘", actualTravelMinutes: "實際旅行分鐘",
+          danger: "路線危險程度", knowledgeStatus: "路線情報狀態", content: "情報內容", summary: "摘要",
         };
         if (labels[key]) return labels[key];
         if (/[㐀-鿿]/u.test(key)) return key;
@@ -1182,6 +1571,7 @@
           medium: "中等", confirmed: "已確認", observation: "親自觀察", identification: "辨識",
           research: "研究", npc: "人物告知", document: "文件", event: "事件", legacy_record: "既有紀錄",
           water_source: "水源", inn: "旅店", shop: "商店", open: "開放", closed: "關閉", restricted: "有限制",
+          rough: "粗略", walk: "步行", ride: "騎乘", boat: "乘船", minor: "次要", important: "重要", major: "重大",
         };
         return labels[value] || value;
       }
@@ -1210,6 +1600,24 @@
 
       document.querySelectorAll("[data-section]").forEach(button => button.addEventListener("click", () => activateSection(button.dataset.section)));
       document.querySelectorAll("[data-tab]").forEach(button => button.addEventListener("click", () => activateTab(button.dataset.tab)));
+
+      document.querySelectorAll("[data-map-view]").forEach(button => button.addEventListener("click", () => {
+        mapView = button.dataset.mapView === "list" ? "list" : "graph";
+        renderMapView();
+      }));
+      $("map-recenter").addEventListener("click", recenterMap);
+      $("map-focus-current").addEventListener("click", () => {
+        mapFocusId = String(mapLocationCache.mapId || "");
+        renderMapView();
+      });
+      $("map-zoom-out").addEventListener("click", () => {
+        const viewport = $("map-graph").querySelector(".map-svg > g");
+        if (viewport) zoomMap(viewport, .82, $("map-graph").clientWidth / 2, $("map-graph").clientHeight / 2);
+      });
+      $("map-zoom-in").addEventListener("click", () => {
+        const viewport = $("map-graph").querySelector(".map-svg > g");
+        if (viewport) zoomMap(viewport, 1.2, $("map-graph").clientWidth / 2, $("map-graph").clientHeight / 2);
+      });
 
       document.querySelectorAll("[data-inventory-category]").forEach(button => button.addEventListener("click", () => {
         inventoryCategory = button.dataset.inventoryCategory || "all";
