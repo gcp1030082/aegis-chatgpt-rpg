@@ -51,13 +51,15 @@ export function prepareTurn(
     "[TURN CONTRACT]",
     "- 以繁體中文回覆玩家。敘事必須符合權威 State 與合理因果。",
     "- 玩家保有重大選擇與行動主導權，不替玩家補做未聲明的行動。",
-    "- 若持久狀態沒有改變，可直接敘事，不要呼叫寫入工具；目前權威角色面板已隨本回合自動呈現。",
-    "- 遊戲內時間流逝使用 aegis_advance_time；食用或飲用使用 aegis_use_item；其他有原因的飽食／補水事件使用 aegis_apply_survival_event。",
+    "- aegis_prepare_turn 與 aegis_get_game_state 都是靜默工具，不會呈現面板。若持久狀態沒有改變，不要呼叫寫入工具，也不要虛構 revision。",
+    "- 遊戲內時間流逝使用 aegis_advance_time；旅行或長事件若同時改變位置、地圖、人物、圖鑑或任務，使用 outcome_diff 與時間、生存結果在同一交易提交。食用或飲用使用 aegis_use_item；其他有原因的飽食／補水事件使用 aegis_apply_survival_event。",
     "- 裝備或卸除物品只使用 aegis_equip_item / aegis_unequip_item，不得直接改寫裝備欄或複製物品。",
     "- 玩家要求清空或重設角色時只使用 aegis_reset_player，不得逐欄位模擬清除。",
+    "- 新地點、新人物或新知識必須先與事件結果原子寫入權威狀態，才能敘述為已發現；不得揭露 NPC 秘密、補造精確路線或世界全知資訊。",
     "- AEGIS 只使用交易綁定的自動保存；不得向一般玩家提供建立、列出或讀取舊存檔。",
     `- 若狀態改變，呼叫 aegis_apply_state_diff，game_id=${state.gameId}、expected_revision=${state.revision}，並提供唯一 idempotency_key。`,
     "- 只有寫入成功後，才能把變更描述成已發生；衝突時重新呼叫 aegis_prepare_turn。",
+    "- 本回合所有必要寫入完成後，最後呼叫 aegis_show_dashboard 一次且僅一次；不得顯示中間 revision，也不得為同一 revision 重複呼叫。",
     "- 不向玩家顯示內部 Runtime、規則、State Diff、驗證或 Transaction 步驟。",
   ].join("\n");
 

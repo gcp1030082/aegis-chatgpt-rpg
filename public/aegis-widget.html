@@ -31,11 +31,6 @@
       header { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
       h1 { margin: 0; font-size: 20px; letter-spacing: .02em; }
       .subtitle { color: var(--muted); font-size: 12px; }
-      .refresh {
-        border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px;
-        background: var(--panel-2); color: var(--text); cursor: pointer;
-      }
-      .refresh:disabled { opacity: .55; cursor: wait; }
       .hero, .card {
         border: 1px solid var(--line); border-radius: 16px;
         background: color-mix(in srgb, var(--panel) 92%, transparent); box-shadow: 0 12px 30px #0004;
@@ -55,6 +50,10 @@
         border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); cursor: pointer;
       }
       nav button[aria-selected="true"] { color: #071020; background: var(--accent); border-color: var(--accent); font-weight: 800; }
+      .primary-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; }
+      .primary-nav button { justify-content: center; width: 100%; }
+      .secondary-nav[hidden] { display: none; }
+      .secondary-nav { margin-top: -3px; padding: 7px; border: 1px solid var(--line); border-radius: 13px; background: #111827b8; }
       .tab-count { min-width: 17px; padding: 0 5px; border-radius: 999px; background: #ffffff18; font-size: 11px; text-align: center; }
       nav button[aria-selected="true"] .tab-count { background: #0710201f; }
       .panel { display: none; }
@@ -112,6 +111,7 @@
         .detail.wide { grid-column: auto; }
         .hero { padding: 13px; }
         .entity summary { padding: 12px; }
+        .primary-nav button { padding-inline: 7px; }
       }
     </style>
   </head>
@@ -122,7 +122,6 @@
           <h1>AEGIS</h1>
           <div class="subtitle" id="world-title">等待權威狀態…</div>
         </div>
-        <button class="refresh" id="refresh" type="button">重新整理</button>
       </header>
 
       <section class="hero">
@@ -138,12 +137,24 @@
         <div class="autosave" id="autosave">進度已自動保存</div>
       </section>
 
-      <nav aria-label="AEGIS 資料分類">
+      <nav class="primary-nav" aria-label="AEGIS 主要導覽">
+        <button type="button" data-section="character" aria-selected="true">角色</button>
+        <button type="button" data-section="adventure" aria-selected="false">冒險</button>
+        <button type="button" data-section="knowledge" aria-selected="false">知識</button>
+      </nav>
+      <nav class="secondary-nav" data-section-nav="character" aria-label="角色資料">
         <button type="button" data-tab="overview" aria-selected="true">總覽</button>
         <button type="button" data-tab="inventory" aria-selected="false">背包 <span class="tab-count" id="inventory-count">0</span></button>
         <button type="button" data-tab="equipment" aria-selected="false">裝備 <span class="tab-count" id="equipment-count">0</span></button>
         <button type="button" data-tab="skills" aria-selected="false">技能 <span class="tab-count" id="skills-count">0</span></button>
-        <button type="button" data-tab="quests" aria-selected="false">任務 <span class="tab-count" id="quests-count">0</span></button>
+      </nav>
+      <nav class="secondary-nav" data-section-nav="adventure" aria-label="冒險資料" hidden>
+        <button type="button" data-tab="quests" aria-selected="true">任務 <span class="tab-count" id="quests-count">0</span></button>
+        <button type="button" data-tab="map" aria-selected="false">地圖 <span class="tab-count" id="map-count">0</span></button>
+        <button type="button" data-tab="people" aria-selected="false">人物 <span class="tab-count" id="people-count">0</span></button>
+      </nav>
+      <nav class="secondary-nav" data-section-nav="knowledge" aria-label="知識資料" hidden>
+        <button type="button" data-tab="compendium" aria-selected="true">圖鑑 <span class="tab-count" id="compendium-count">0</span></button>
       </nav>
 
       <section class="panel active" id="panel-overview">
@@ -182,6 +193,28 @@
         </article>
       </section>
       <section class="panel" id="panel-quests"><article class="card"><h2>任務</h2><div class="list" id="quests"></div></article></section>
+      <section class="panel" id="panel-map">
+        <article class="card">
+          <h2>地圖</h2>
+          <p class="section-intro">只顯示已知或聽聞地點與權威路線；前往地點須在正常遊戲回合中提出。</p>
+          <div class="list" id="map"></div>
+        </article>
+      </section>
+      <section class="panel" id="panel-people">
+        <article class="card">
+          <h2>人物</h2>
+          <p class="section-intro">只顯示角色合理知道的身份、關係、情報與目前或最後已知位置。</p>
+          <div class="list" id="people"></div>
+        </article>
+      </section>
+      <section class="panel" id="panel-compendium">
+        <article class="card">
+          <h2>圖鑑</h2>
+          <p class="section-intro">知識會依傳聞、觀察、辨識、驗證與研究逐步更新。</p>
+          <div class="inventory-tabs" id="compendium-tabs" role="tablist" aria-label="圖鑑分類"></div>
+          <div class="list" id="compendium"></div>
+        </article>
+      </section>
       <div id="status" role="status"></div>
     </main>
 
@@ -191,6 +224,10 @@
       let inventoryCategory = "all";
       let skillItems = [];
       let skillCategory = "all";
+      let compendiumItems = [];
+      let compendiumCategory = "all";
+      let renderedDashboardKey = "";
+      const latestRevisionByGame = new Map();
       let rpcId = 0;
       const pending = new Map();
       const $ = (id) => document.getElementById(id);
@@ -217,7 +254,7 @@
       }, { passive: true });
 
       const bridgeReady = request("ui/initialize", {
-        appInfo: { name: "aegis-dashboard", version: "0.4.0" },
+        appInfo: { name: "aegis-dashboard", version: "0.5.0" },
         appCapabilities: {},
         protocolVersion: "2026-01-26",
       }).then(() => notify("ui/notifications/initialized", {}));
@@ -225,6 +262,14 @@
       function update(response) {
         const candidate = response?.structuredContent?.result?.dashboard;
         if (!candidate?.game) return;
+        const gameId = String(candidate.game.gameId || "");
+        const revision = Number(candidate.game.revision);
+        if (!gameId || !Number.isInteger(revision) || revision < 0) return;
+        const key = candidate.dashboardKey || `${gameId}:${revision}`;
+        const latest = latestRevisionByGame.get(gameId);
+        if (key === renderedDashboardKey || (Number.isInteger(latest) && revision <= latest)) return;
+        latestRevisionByGame.set(gameId, revision);
+        renderedDashboardKey = key;
         dashboard = candidate;
         render();
       }
@@ -240,6 +285,9 @@
         const skills = normalizeNamedCollection(player.skills);
         const equipment = normalizeEquipment(player.equipment, player.equippedItems);
         const quests = normalizeCollection(game.quests);
+        const mapEntries = normalizeCollection(game.map);
+        const people = normalizeCollection(game.npcs);
+        const compendium = normalizeCollection(game.compendium);
 
         $("world-title").textContent = [world.name || game.title, world.genre].filter(Boolean).join("｜");
         $("player-name").textContent = player.name || "未建立角色";
@@ -265,11 +313,19 @@
           badge: pick(item, ["status", "狀態"]) || "",
           note: pick(item, ["description", "note", "描述", "資訊"]) || formatObjective(item.objectives),
         }));
+        renderMap($("map"), mapEntries, location);
+        renderPeople($("people"), people, mapEntries);
+        compendiumItems = compendium;
+        renderCompendiumTabs();
+        renderCompendiumCategory();
 
         setCount("inventory-count", inventory.length);
         setCount("equipment-count", equipment.filter(entry => !entry.empty).length);
         setCount("skills-count", skills.length);
         setCount("quests-count", quests.length);
+        setCount("map-count", mapEntries.length);
+        setCount("people-count", people.length);
+        setCount("compendium-count", compendium.length);
         const autoSave = asRecord(game.autoSave);
         $("autosave").textContent = autoSave.savedAt
           ? `進度已自動保存｜${formatDate(autoSave.savedAt)}`
@@ -518,6 +574,259 @@
             extras: extraFields(item, known),
           }));
         }
+      }
+
+      function renderMap(root, entries, playerLocation) {
+        root.replaceChildren();
+        const byId = new Map(entries.map(item => [String(item.mapId || ""), item]));
+        const currentMapId = String(playerLocation.mapId || "");
+        const currentName = formatPlayerLocation(playerLocation, byId);
+        root.append(row("目前位置", "", currentName));
+        if (!entries.length) {
+          root.append(el("div", "empty", "尚無已知或聽聞地點"));
+          return;
+        }
+        const ordered = [...entries].sort((left, right) => mapDepth(left, byId) - mapDepth(right, byId));
+        for (const item of ordered) {
+          const mapId = String(item.mapId || "");
+          const current = mapId && mapId === currentMapId;
+          const routes = formatRoutes(item.routes, byId);
+          const facilities = formatFacilities(item.facilities);
+          root.append(expandable({
+            title: String(item.name || "未命名地點"),
+            badge: current ? "目前位置" : discoveryLabel(item.discovery),
+            note: [mapPath(item, byId), item.description].filter(present).map(display).join("・") || "已記錄地點",
+            fields: [
+              field("地點層級", mapKindLabel(item.kind), true),
+              field("得知狀態", discoveryLabel(item.discovery), true),
+              field("所屬位置", mapPath(item, byId)),
+              field("已知設施", facilities, false, true),
+              field("已知路線", routes || "尚無權威路線資料", true, true),
+              field("地點資訊", item.description, false, true),
+            ],
+            extras: [],
+          }));
+        }
+      }
+
+      function renderPeople(root, people, mapEntries) {
+        root.replaceChildren();
+        if (!people.length) return root.append(el("div", "empty", "尚未認識或聽聞任何人物"));
+        const mapById = new Map(mapEntries.map(item => [String(item.mapId || ""), item]));
+        for (const person of people) {
+          const location = asRecord(person.location);
+          const information = formatKnownInformation(person.knownInformation);
+          const services = formatServices(person.services);
+          const memories = formatMemories(person.memories);
+          root.append(expandable({
+            title: String(person.name || "未命名人物"),
+            badge: familiarityLabel(person.familiarity),
+            note: [person.identity, formatNpcLocation(location, mapById)].filter(present).map(display).join("・") || "已知人物",
+            fields: [
+              field("身份", person.identity),
+              field("熟悉程度", familiarityLabel(person.familiarity), true),
+              field("關係", person.relationship),
+              field(location.status === "current" ? "目前位置" : "最後已知位置", formatNpcLocation(location, mapById)),
+              field("已知情報", information, false, true),
+              field("可用服務", services, false, true),
+              field("重要互動記憶", memories, false, true),
+              field("任務關聯", Array.isArray(person.questIds) && person.questIds.length ? `${person.questIds.length} 項已知關聯` : undefined),
+            ],
+            extras: [],
+          }));
+        }
+      }
+
+      function renderCompendiumTabs() {
+        const root = $("compendium-tabs");
+        root.replaceChildren();
+        const categories = [];
+        const seen = new Set();
+        for (const entry of compendiumItems) {
+          const id = String(entry.category || "other");
+          if (seen.has(id)) continue;
+          seen.add(id);
+          categories.push({ id, label: compendiumCategoryLabel(id) });
+        }
+        if (compendiumCategory !== "all" && !seen.has(compendiumCategory)) compendiumCategory = "all";
+        for (const category of [{ id: "all", label: "全部" }, ...categories]) {
+          const button = el("button", "", category.label);
+          button.type = "button";
+          button.dataset.compendiumCategory = category.id;
+          button.setAttribute("aria-selected", String(compendiumCategory === category.id));
+          button.addEventListener("click", () => {
+            compendiumCategory = category.id;
+            root.querySelectorAll("button").forEach(item => item.setAttribute("aria-selected", String(item === button)));
+            renderCompendiumCategory();
+          });
+          root.append(button);
+        }
+      }
+
+      function renderCompendiumCategory() {
+        const entries = compendiumCategory === "all"
+          ? compendiumItems
+          : compendiumItems.filter(item => String(item.category || "other") === compendiumCategory);
+        renderCompendium($("compendium"), entries);
+      }
+
+      function renderCompendium(root, entries) {
+        root.replaceChildren();
+        if (!entries.length) {
+          const message = compendiumCategory === "all" ? "尚未收錄圖鑑條目" : "此分類尚未收錄圖鑑條目";
+          return root.append(el("div", "empty", message));
+        }
+        for (const entry of entries) {
+          root.append(expandable({
+            title: String(entry.name || "未命名條目"),
+            badge: knowledgeStageLabel(entry.stage),
+            note: [compendiumCategoryLabel(entry.category), entry.description].filter(present).map(display).join("・") || "已收錄知識",
+            fields: [
+              field("分類", compendiumCategoryLabel(entry.category), true),
+              field("研究階段", knowledgeStageLabel(entry.stage), true),
+              field("可信程度", confidenceLabel(entry.confidence), true),
+              field("已知內容", entry.description, false, true),
+              field("已知事實", formatStringList(entry.knownFacts), false, true),
+              field("知識來源", formatKnowledgeSources(entry.sources), true, true),
+              field("次級標籤", formatStringList(entry.tags), false, true),
+            ],
+            extras: [],
+          }));
+        }
+      }
+
+      function formatPlayerLocation(location, byId) {
+        const mapped = byId.get(String(location.mapId || ""));
+        const hierarchy = mapped ? mapPath(mapped, byId) : "";
+        return hierarchy || [location.region, location.location, location.sublocation].filter(present).map(display).join(" › ") || "位置未知";
+      }
+
+      function mapPath(item, byId) {
+        const names = [];
+        const visited = new Set();
+        let current = item;
+        while (current && !visited.has(current.mapId)) {
+          if (current.name) names.unshift(String(current.name));
+          visited.add(current.mapId);
+          current = current.parentMapId ? byId.get(String(current.parentMapId)) : undefined;
+        }
+        return names.join(" › ");
+      }
+
+      function mapDepth(item, byId) {
+        let depth = 0;
+        const visited = new Set();
+        let current = item;
+        while (current?.parentMapId && !visited.has(current.parentMapId)) {
+          visited.add(current.parentMapId);
+          current = byId.get(String(current.parentMapId));
+          depth += 1;
+        }
+        return depth;
+      }
+
+      function formatRoutes(value, byId) {
+        if (!Array.isArray(value) || !value.length) return undefined;
+        return value.map(raw => {
+          const route = asRecord(raw);
+          const target = byId.get(String(route.toMapId || ""));
+          const details = [];
+          if (present(route.estimatedTravel)) details.push(`預估時間：${display(route.estimatedTravel)}`);
+          if (present(route.danger)) details.push(`危險：${dangerLabel(route.danger)}`);
+          if (Array.isArray(route.conditions) && route.conditions.length) details.push(`狀況：${formatStringList(route.conditions)}`);
+          if (Array.isArray(route.requirements) && route.requirements.length) details.push(`條件：${formatStringList(route.requirements)}`);
+          if (present(route.notes)) details.push(display(route.notes));
+          return `前往 ${target?.name || "已知目的地"}${details.length ? `｜${details.join("；")}` : ""}`;
+        }).join("\n");
+      }
+
+      function formatFacilities(value) {
+        if (!Array.isArray(value) || !value.length) return undefined;
+        return value.map(raw => {
+          if (typeof raw === "string") return raw;
+          const facility = asRecord(raw);
+          return [facility.name, facility.type ? localizePrimitive(facility.type) : "", facility.availability].filter(present).map(display).join("｜");
+        }).filter(present).join("、");
+      }
+
+      function formatNpcLocation(location, mapById) {
+        const mapped = mapById.get(String(location.mapId || ""));
+        const name = mapped?.name || location.name;
+        if (!present(name)) return undefined;
+        return `${display(name)}${location.status === "last_known" ? "（最後已知）" : location.status === "unknown" ? "（位置未確認）" : ""}`;
+      }
+
+      function formatKnownInformation(value) {
+        if (!Array.isArray(value) || !value.length) return undefined;
+        return value.map(raw => {
+          const info = asRecord(raw);
+          const parts = [info.text];
+          if (present(info.confidence)) parts.push(`可信程度：${confidenceLabel(info.confidence)}`);
+          if (present(info.source)) parts.push(`來源：${formatKnowledgeSource(info.source)}`);
+          return parts.filter(present).map(display).join("｜");
+        }).join("\n");
+      }
+
+      function formatServices(value) {
+        if (!Array.isArray(value) || !value.length) return undefined;
+        return value.map(raw => typeof raw === "string" ? raw : [asRecord(raw).name, asRecord(raw).conditions].filter(present).map(display).join("｜")).join("、");
+      }
+
+      function formatMemories(value) {
+        if (!Array.isArray(value) || !value.length) return undefined;
+        return value.map(raw => asRecord(raw).summary).filter(present).map(display).join("\n");
+      }
+
+      function formatKnowledgeSources(value) {
+        if (!Array.isArray(value) || !value.length) return "來源尚未記錄";
+        return value.map(formatKnowledgeSource).filter(present).join("\n") || "來源尚未記錄";
+      }
+
+      function formatKnowledgeSource(raw) {
+        if (typeof raw === "string") return raw;
+        const source = asRecord(raw);
+        const typeLabels = {
+          rumor: "傳聞", observation: "親自觀察", identification: "辨識", research: "研究",
+          npc: "人物告知", document: "文件", event: "事件", recorded_source: "既有紀錄",
+          legacy_record: "既有紀錄",
+        };
+        const type = typeLabels[source.type] || "知識來源";
+        return present(source.name) ? `${type}：${display(source.name)}` : type;
+      }
+
+      function formatStringList(value) {
+        return Array.isArray(value) && value.length ? value.map(display).join("、") : undefined;
+      }
+
+      function mapKindLabel(value) {
+        return { region: "區域", town: "城鎮", place: "地點", subplace: "子地點" }[value] || "地點";
+      }
+
+      function discoveryLabel(value) {
+        return { heard: "聽聞", known: "已知", visited: "已造訪", surveyed: "已勘查" }[value] || "已知";
+      }
+
+      function dangerLabel(value) {
+        return { unknown: "未知", low: "低", moderate: "中等", high: "高", extreme: "極高" }[value] || "未知";
+      }
+
+      function familiarityLabel(value) {
+        return { heard: "僅聽聞", met: "見過", acquainted: "認識", familiar: "熟悉", trusted: "信任" }[value] || "已知";
+      }
+
+      function compendiumCategoryLabel(value) {
+        return {
+          creature: "生物", plant: "植物", material: "素材", magical_phenomenon: "魔法現象",
+          faction: "勢力", culture: "文化", other: "其他",
+        }[value] || "其他";
+      }
+
+      function knowledgeStageLabel(value) {
+        return { rumor: "傳聞", observed: "觀察", identified: "辨識", verified: "驗證", researched: "研究" }[value] || "傳聞";
+      }
+
+      function confidenceLabel(value) {
+        return { low: "低", medium: "中等", high: "高", confirmed: "已確認" }[value] || "尚未確認";
       }
 
       function expandable({ title, badge, note, fields, extras }) {
@@ -832,6 +1141,11 @@
           requirements: "使用條件", equipmentSlot: "裝備欄位", equipmentSlots: "可裝備欄位",
           strength: "力量", dexterity: "敏捷", constitution: "體質", intelligence: "智力", wisdom: "感知", charisma: "魅力",
           vitality: "活力", agility: "靈巧", endurance: "耐力", spirit: "精神", luck: "幸運",
+          mapId: "地圖識別碼", npcId: "人物識別碼", entryId: "圖鑑識別碼", kind: "地點層級",
+          parentMapId: "上層地點", discovery: "得知狀態", routes: "已知路線", facilities: "設施",
+          identity: "身份", familiarity: "熟悉程度", relationship: "關係", knownInformation: "已知情報",
+          services: "服務", memories: "重要互動", stage: "研究階段", confidence: "可信程度",
+          knownFacts: "已知事實", sources: "知識來源", estimatedTravel: "預估時間", danger: "危險程度",
         };
         if (labels[key]) return labels[key];
         if (/[㐀-鿿]/u.test(key)) return key;
@@ -855,6 +1169,16 @@
           initial_item: "初始物品", initial_skill: "初始技能", recorded_source: "取得紀錄",
           normal: "一般", rest: "休息", sleep: "睡眠", travel: "旅行", running: "奔跑", heavy_labor: "重體力勞動",
           temperate: "溫和", hot: "炎熱", cold: "寒冷",
+          region: "區域", town: "城鎮", place: "地點", subplace: "子地點",
+          heard: "聽聞", known: "已知", visited: "已造訪", surveyed: "已勘查",
+          unknown: "未知", low: "低", moderate: "中等", high: "高", extreme: "極高",
+          met: "見過", acquainted: "認識", familiar: "熟悉", trusted: "信任",
+          current: "目前位置", last_known: "最後已知", creature: "生物", plant: "植物",
+          material: "素材", magical_phenomenon: "魔法現象", faction: "勢力", culture: "文化",
+          rumor: "傳聞", observed: "觀察", identified: "辨識", verified: "驗證", researched: "研究",
+          medium: "中等", confirmed: "已確認", observation: "親自觀察", identification: "辨識",
+          research: "研究", npc: "人物告知", document: "文件", event: "事件", legacy_record: "既有紀錄",
+          water_source: "水源", inn: "旅店", shop: "商店", open: "開放", closed: "關閉", restricted: "有限制",
         };
         return labels[value] || value;
       }
@@ -863,10 +1187,26 @@
       function formatObjective(value) { return Array.isArray(value) ? value.map(display).join("、") : ""; }
       function formatDate(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? String(value || "—") : date.toLocaleString("zh-TW"); }
 
-      document.querySelectorAll("nav button").forEach(button => button.addEventListener("click", () => {
-        document.querySelectorAll("nav button").forEach(item => item.setAttribute("aria-selected", String(item === button)));
-        document.querySelectorAll(".panel").forEach(panel => panel.classList.toggle("active", panel.id === `panel-${button.dataset.tab}`));
-      }));
+      const sectionTabs = {
+        character: ["overview", "inventory", "equipment", "skills"],
+        adventure: ["quests", "map", "people"],
+        knowledge: ["compendium"],
+      };
+
+      function activateTab(tab) {
+        document.querySelectorAll("[data-tab]").forEach(item => item.setAttribute("aria-selected", String(item.dataset.tab === tab)));
+        document.querySelectorAll(".panel").forEach(panel => panel.classList.toggle("active", panel.id === `panel-${tab}`));
+      }
+
+      function activateSection(section) {
+        document.querySelectorAll("[data-section]").forEach(item => item.setAttribute("aria-selected", String(item.dataset.section === section)));
+        document.querySelectorAll("[data-section-nav]").forEach(nav => { nav.hidden = nav.dataset.sectionNav !== section; });
+        const active = document.querySelector(".panel.active")?.id.replace("panel-", "");
+        if (!sectionTabs[section]?.includes(active)) activateTab(sectionTabs[section]?.[0]);
+      }
+
+      document.querySelectorAll("[data-section]").forEach(button => button.addEventListener("click", () => activateSection(button.dataset.section)));
+      document.querySelectorAll("[data-tab]").forEach(button => button.addEventListener("click", () => activateTab(button.dataset.tab)));
 
       document.querySelectorAll("[data-inventory-category]").forEach(button => button.addEventListener("click", () => {
         inventoryCategory = button.dataset.inventoryCategory || "all";
@@ -874,20 +1214,7 @@
         renderInventoryCategory();
       }));
 
-      $("refresh").addEventListener("click", async () => {
-        if (!dashboard?.game?.gameId) return;
-        $("refresh").disabled = true;
-        $("status").textContent = "正在讀取權威狀態…";
-        try {
-          await bridgeReady;
-          const response = await request("tools/call", { name: "aegis_show_dashboard", arguments: { game_id: dashboard.game.gameId } });
-          update(response);
-        } catch (error) {
-          $("status").textContent = `重新整理失敗：${error?.message || "未知錯誤"}`;
-        } finally {
-          $("refresh").disabled = false;
-        }
-      });
+      void bridgeReady;
 
       const legacyOutput = window.openai?.toolOutput;
       if (legacyOutput) update({ structuredContent: legacyOutput });

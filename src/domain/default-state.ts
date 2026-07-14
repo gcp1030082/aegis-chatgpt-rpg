@@ -2,8 +2,9 @@ import type { GameState, JsonObject } from "./types.js";
 import { migrateEquipmentState } from "./equipment.js";
 import { survivalView } from "./survival.js";
 import { normalizeSkills } from "./skills.js";
+import { normalizeKnowledgeState, playerKnowledgeView } from "./knowledge.js";
 
-export const AEGIS_VERSION = "6.7.7-mcp.4";
+export const AEGIS_VERSION = "6.7.7-mcp.5";
 
 export function defaultGameState(gameId: string, title = "AEGIS 冒險"): GameState {
   const now = new Date().toISOString();
@@ -70,6 +71,8 @@ export function defaultPlayerState(): JsonObject {
 
 export function migrateGameState(state: GameState): GameState {
   const migrated = cloneState(state);
+  migrated.version = AEGIS_VERSION;
+  migrated.schemaVersion = AEGIS_VERSION;
   if (migrated.world.survivalBalance === undefined) {
     migrated.world.survivalBalance = { hungerPerGameHour: 2, hydrationPerGameHour: 3 };
   }
@@ -100,6 +103,10 @@ export function migrateGameState(state: GameState): GameState {
   if (autoSave.revision === undefined) autoSave.revision = migrated.revision;
   if (autoSave.savedAt === undefined) autoSave.savedAt = migrated.updatedAt;
   migrated.engine.autoSave = autoSave;
+  if (!Array.isArray(migrated.npcs)) migrated.npcs = [];
+  if (!Array.isArray(migrated.map)) migrated.map = [];
+  if (!Array.isArray(migrated.compendium)) migrated.compendium = [];
+  normalizeKnowledgeState(migrated, false);
   return migrateEquipmentState(migrated);
 }
 
@@ -107,6 +114,7 @@ export function toGameView(state: GameState) {
   const player = cloneState(state.player);
   const storedSurvival = asObject(player.survival);
   player.survival = { ...storedSurvival, ...survivalView(player) };
+  const knowledge = playerKnowledgeView(state);
   return {
     gameId: state.gameId,
     title: state.title,
@@ -116,6 +124,9 @@ export function toGameView(state: GameState) {
     player,
     inventory: state.inventory,
     quests: state.quests,
+    map: knowledge.map,
+    npcs: knowledge.npcs,
+    compendium: knowledge.compendium,
     recentHistory: state.history.recent.slice(-12),
     autoSave: asObject(state.engine.autoSave),
   };

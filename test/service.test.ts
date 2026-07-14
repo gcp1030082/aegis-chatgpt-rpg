@@ -98,9 +98,16 @@ describe("AegisService", () => {
       inventory: [...inventory, ...equipmentItems],
       quests: [{ id: "quest-1", name: "舊任務一" }, { id: "quest-2", name: "舊任務二" }],
       history: { recent: ["近期一", "近期二", "近期三"], major: ["重大一"], summary: ["舊摘要"] },
-      npcs: [{ id: "npc-1", name: "世界居民", relationship: "摯友", affinity: 99 }],
-      map: [{ id: "map-1", name: "世界地圖", visited: true, progress: 80 }],
-      compendium: [{ id: "book-1", name: "世界圖鑑", unlocked: true, playerNotes: "舊角色筆記" }],
+      npcs: [{
+        npcId: "npc-1", name: "世界居民", familiarity: "trusted", relationship: "摯友",
+        location: { mapId: "map-1", name: "舊城鎮", status: "current" },
+        knownInformation: [{ infoId: "info-1", text: "舊角色知道的情報", confidence: "high" }],
+      }],
+      map: [{ mapId: "map-1", name: "舊城鎮", kind: "town", discovery: "visited" }],
+      compendium: [{
+        entryId: "book-1", name: "舊角色圖鑑", category: "culture", stage: "identified", confidence: "high",
+        sources: [{ type: "observation", name: "舊角色觀察" }], relatedMapIds: ["map-1"],
+      }],
     });
     expect(populated.game.revision).toBe(1);
     let revision = populated.game.revision;
@@ -132,9 +139,9 @@ describe("AegisService", () => {
     expect(reset.game.quests).toEqual([]);
     expect(reset.game.history).toEqual({ recent: [], major: [], summary: [] });
     expect(reset.game.world).toMatchObject({ name: "保留世界", rules: ["世界規則"] });
-    expect(reset.game.npcs[0]).toEqual({ id: "npc-1", name: "世界居民" });
-    expect(reset.game.map[0]).toEqual({ id: "map-1", name: "世界地圖" });
-    expect(reset.game.compendium[0]).toEqual({ id: "book-1", name: "世界圖鑑" });
+    expect(reset.game.npcs).toEqual([]);
+    expect(reset.game.map).toEqual([]);
+    expect(reset.game.compendium).toEqual([]);
     expect(JSON.stringify(reset.game)).not.toContain("舊角色洛恩");
     expect(JSON.stringify(reset.game)).not.toContain("舊技能");
     expect(JSON.stringify(reset.game)).not.toContain("舊任務");
@@ -246,6 +253,39 @@ describe("AegisService", () => {
     const replay = await service.refillContainer("main", 6, "refill-1", "water-skin", "村莊乾淨水井");
     expect(replay.idempotentReplay).toBe(true);
     expect(replay.game.revision).toBe(7);
+  });
+
+  it("atomically settles travel time with location, map, NPC, and compendium discovery", async () => {
+    await service.createGame("main");
+    const traveled = await service.advanceTime(
+      "main", 0, "travel-discovery", 1, "travel", "temperate", "抵達溪谷並首次遇見巡林者",
+      0, 0, "群星曆一日", "上午 10:00",
+      {
+        player: { initialized: true, name: "旅人", location: { mapId: "place-creek", location: "銀溪谷" } },
+        map: [{ mapId: "place-creek", name: "銀溪谷", kind: "place", discovery: "visited" }],
+        npcs: [{
+          npcId: "npc-ranger", name: "巡林者伊芙", identity: "巡林者", familiarity: "met",
+          location: { mapId: "place-creek", name: "銀溪谷", status: "current" },
+          knownInformation: [{ infoId: "info-warning", text: "她警告夜間有狼群", confidence: "high" }],
+          services: ["道路情報"], questIds: [], memories: [],
+        }],
+        compendium: [{
+          entryId: "entry-wolf", name: "灰脊狼", category: "creature", stage: "rumor", confidence: "low",
+          sources: [{ type: "npc", name: "巡林者伊芙", npcId: "npc-ranger", mapId: "place-creek" }],
+          knownFacts: ["夜間可能在溪谷活動"], relatedMapIds: ["place-creek"], relatedNpcIds: ["npc-ranger"],
+        }],
+      },
+    );
+    expect(traveled.game.revision).toBe(1);
+    expect(traveled.changedPaths).toEqual(expect.arrayContaining([
+      "player.location", "player.survival.hunger", "player.survival.hydration",
+      "player.survival.elapsedGameMinutes", "player.date", "player.time", "map", "npcs", "compendium",
+    ]));
+    expect(traveled.game.player.location).toMatchObject({ mapId: "place-creek" });
+    expect(traveled.game.map).toHaveLength(1);
+    expect(traveled.game.npcs).toHaveLength(1);
+    expect(traveled.game.compendium).toHaveLength(1);
+    expect(traveled.game.history.recent).toHaveLength(1);
   });
 
   it("records survival events, reports threshold changes, and never kills immediately at zero", async () => {

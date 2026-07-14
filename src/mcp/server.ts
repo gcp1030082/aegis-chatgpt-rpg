@@ -9,10 +9,11 @@ import { asAegisError } from "../domain/errors.js";
 import { toGameView } from "../domain/default-state.js";
 import type { AegisService } from "../service.js";
 
-const WIDGET_URI = "ui://widget/aegis-dashboard-v4.html";
+const WIDGET_URI = "ui://widget/aegis-dashboard-v5.html";
 const LEGACY_WIDGET_URI = "ui://widget/aegis-dashboard-v1.html";
 const LEGACY_WIDGET_V2_URI = "ui://widget/aegis-dashboard-v2.html";
 const LEGACY_WIDGET_V3_URI = "ui://widget/aegis-dashboard-v3.html";
+const LEGACY_WIDGET_V4_URI = "ui://widget/aegis-dashboard-v4.html";
 const gameIdSchema = z
   .string()
   .min(1)
@@ -29,10 +30,10 @@ const resultOutputSchema = { result: z.record(z.unknown()) };
 
 export function createAegisMcpServer(service: AegisService, widgetHtml: string): McpServer {
   const server = new McpServer(
-    { name: "aegis-rpg", version: "0.4.0" },
+    { name: "aegis-rpg", version: "0.5.0" },
     {
       instructions:
-        "AEGIS State 是單一流動世界的唯一權威。每個遊戲回合先呼叫 aegis_prepare_turn，再依權威狀態判定；若持久狀態改變，必須在敘述成既成事實前成功寫入。時間流逝一律呼叫 aegis_advance_time；食用或飲用一律呼叫 aegis_use_item；事件造成飽食或補水變化使用 aegis_apply_survival_event；裝備與卸除只使用 aegis_equip_item / aegis_unequip_item；玩家重設只使用 aegis_reset_player。寫入衝突時重新 prepare。不得自行虛構背包、金錢、能力、NPC 狀態或世界事實。物品 category 必須且只能是 consumable、equipment、misc、special；全部只是介面檢視。每件實體物品必須有唯一 instanceId；已裝備實例不得留在 inventory。物品描述、結構化 effects 或 modifiers、acquisition 與限制必須分離；初始物品 acquisition.type 使用 initial_item。技能必須有單一 category、繁中 categoryLabel、分離的 description、effects、acquisition 與可選 tags；初始技能使用 initial_skill；unique 類別必須有 uniqueScope 與 uniqueHolderId 權威依據。未知欄位保持空缺，不得猜測或把規格示例當固定數值。AEGIS 僅自動保存，不向一般玩家提供建立、列出或讀取舊存檔。玩家可見內容全部使用繁體中文，不顯示內部 Diff、Revision、驗證或 Transaction。介面查詢不推進時間。",
+        "AEGIS State 是單一流動世界的唯一權威。每個玩家回合先靜默呼叫 aegis_prepare_turn，再依權威狀態判定；aegis_prepare_turn 與 aegis_get_game_state 都不得建立玩家可見面板。若持久狀態改變，必須在敘述成既成事實前成功寫入；沒有真實變化時不得為了產生 revision 虛構修改。時間流逝一律呼叫 aegis_advance_time；旅行或長事件若同時改變位置、地圖、人物、圖鑑或任務，將這些 outcome_diff 與時間和生存結算放在同一原子交易。食用或飲用一律呼叫 aegis_use_item；事件造成飽食或補水變化使用 aegis_apply_survival_event；裝備與卸除只使用 aegis_equip_item / aegis_unequip_item；玩家重設只使用 aegis_reset_player。寫入衝突時重新 prepare。新地點、新 NPC 或新知識必須先成功寫入，才能在敘述與面板中視為已發現。map 只保存玩家已知或聽聞地點，具有唯一 mapId；npcs 只保存玩家合理知道的資料，具有唯一 npcId，禁止秘密與逐字稿；compendium 只保存實際發現知識，具有唯一 entryId、漸進階段、來源與可信度，不保存人物個體或具體地點。不得自行虛構背包、金錢、能力、NPC 狀態、精確路線或世界全知事實。物品 category 必須且只能是 consumable、equipment、misc、special；全部只是介面檢視。每件實體物品必須有唯一 instanceId；已裝備實例不得留在 inventory。物品描述、結構化 effects 或 modifiers、acquisition 與限制必須分離；初始物品 acquisition.type 使用 initial_item。技能必須有單一 category、繁中 categoryLabel、分離的 description、effects、acquisition 與可選 tags；初始技能使用 initial_skill；unique 類別必須有 uniqueScope 與 uniqueHolderId 權威依據。未知欄位保持空缺，不得猜測或把規格示例當固定數值。AEGIS 僅自動保存，不向一般玩家提供建立、列出或讀取舊存檔。玩家可見內容全部使用繁體中文，不顯示內部 Diff、Revision、驗證或 Transaction。完成本回合所有必要寫入後，最多且恰好呼叫一次 aegis_show_dashboard；不得顯示中間狀態，也不得再次呼叫相同 revision 的面板。頁籤切換完全由前端處理，不呼叫工具、不推進時間、不產生 revision。",
     },
   );
 
@@ -76,6 +77,13 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     {},
     async () => dashboardResource(LEGACY_WIDGET_V3_URI),
   );
+  registerAppResource(
+    server,
+    "aegis-dashboard-v4-compat",
+    LEGACY_WIDGET_V4_URI,
+    {},
+    async () => dashboardResource(LEGACY_WIDGET_V4_URI),
+  );
 
   registerAppTool(
     server,
@@ -89,13 +97,12 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, false, true),
-      _meta: dashboardMeta("建立世界…", "世界已建立並自動保存"),
+      _meta: silentMeta("建立世界…", "世界已建立並自動保存"),
     },
     async ({ game_id, title }) => safeTool(async () => {
       const game = toGameView(await service.createGame(game_id, title));
       return {
         game,
-        dashboard: { game },
         message: "遊戲已建立並自動保存。接著可準備角色建立回合。",
       };
     }),
@@ -106,15 +113,15 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_get_game_state",
     {
       title: "讀取 AEGIS 狀態",
-      description: "讀取權威遊戲狀態並同步角色面板，不推進遊戲時間。",
+      description: "靜默讀取完整權威遊戲狀態，不渲染面板，也不推進遊戲時間。",
       inputSchema: { game_id: gameIdSchema },
       outputSchema: resultOutputSchema,
       annotations: impact(true, false, false, true),
-      _meta: dashboardMeta("讀取權威狀態…", "角色面板已同步"),
+      _meta: silentMeta("讀取權威狀態…", "權威狀態已讀取"),
     },
     async ({ game_id }) => safeTool(async () => {
       const game = await service.getGame(game_id);
-      return { game, dashboard: { game: toGameView(game) } };
+      return { game };
     }),
   );
 
@@ -123,7 +130,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_prepare_turn",
     {
       title: "準備 AEGIS 回合",
-      description: "每個遊戲回合的第一步；取得權威狀態、適用規則與本回合處理契約，並同步角色面板。",
+      description: "每個遊戲回合的靜默第一步；取得權威狀態、適用規則與本回合處理契約，不渲染玩家面板。",
       inputSchema: {
         game_id: gameIdSchema,
         player_input: z.string().min(1).max(4000).describe("玩家本回合的原始行動或指令。"),
@@ -132,15 +139,14 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       },
       outputSchema: resultOutputSchema,
       annotations: impact(true, false, false, true),
-      _meta: dashboardMeta("準備回合…", "角色面板已同步"),
+      _meta: silentMeta("準備回合…", "回合已準備"),
     },
     async ({ game_id, player_input, runtime, action_type }) => safeTool(async () => {
       const turn = await service.prepareTurn(game_id, player_input, runtime, action_type);
       return {
         turn,
-        dashboard: { game: turn.game },
         nextStep:
-          "Resolve only this player action. Use specialized write tools for time, item use, survival, equipment, or player reset, and aegis_apply_state_diff for other changes. Narrate completion only after the required write succeeds. Do not offer manual save or load.",
+          "Resolve only this player action. Use specialized write tools for time, item use, survival, equipment, or player reset, and aegis_apply_state_diff for other changes. Narrate completion only after the required write succeeds. After every write is finished, call aegis_show_dashboard exactly once; never show an intermediate revision. Do not offer manual save or load.",
       };
     }),
   );
@@ -156,13 +162,13 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
         expected_revision: z.number().int().nonnegative().describe("aegis_prepare_turn 回傳的 revision。"),
         idempotency_key: idempotencySchema,
         diff: z.record(z.unknown()).describe(
-          "只含 world、player、inventory、npcs、compendium、map、quests、history 的差異。直接陣列代表完整替換，[] 代表清空。player.skills/inventory/quests/history.recent/history.major/history.summary 必須是陣列。物品 category 必須是 consumable/equipment/misc/special。未知資料不可虛構。",
+          "只含 world、player、inventory、npcs、compendium、map、quests、history 的差異。直接陣列代表完整替換，[] 代表清空。player.skills/inventory/quests/history.recent/history.major/history.summary 必須是陣列。物品 category 必須是 consumable/equipment/misc/special。map 條目必須有 mapId、name、kind(region/town/place/subplace)、discovery(heard/known/visited/surveyed)；路線只可引用已知 toMapId。npcs 條目必須有 npcId、name、familiarity(heard/met/acquainted/familiar/trusted)，只保存玩家已知資料，禁止秘密與逐字稿。compendium 條目必須有 entryId、name、category(creature/plant/material/magical_phenomenon/faction/culture/other)、stage(rumor/observed/identified/verified/researched)、confidence(low/medium/high/confirmed) 與至少一項 sources；不得保存人物個體或具體地點條目。未知資料不可虛構。",
         ),
         turn_summary: z.string().max(500).optional().describe("本回合狀態變化的簡短摘要。"),
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, false, true),
-      _meta: dashboardMeta("提交狀態…", "進度已自動保存"),
+      _meta: silentMeta("提交狀態…", "進度已自動保存"),
     },
     async ({ game_id, expected_revision, idempotency_key, diff, turn_summary }) => safeTool(async () => {
       const applied = await service.applyDiff(
@@ -174,7 +180,6 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       );
       return {
         game: toGameView(applied.game),
-        dashboard: { game: toGameView(applied.game) },
         changedPaths: applied.changedPaths,
         idempotentReplay: applied.idempotentReplay,
         message: applied.idempotentReplay
@@ -198,13 +203,12 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, true, true),
-      _meta: dashboardMeta("重設角色…", "角色已重設並自動保存"),
+      _meta: silentMeta("重設角色…", "角色已重設並自動保存"),
     },
     async ({ game_id, expected_revision, idempotency_key }) => safeTool(async () => {
       const reset = await service.resetPlayer(game_id, expected_revision, idempotency_key);
       return {
         game: toGameView(reset.game),
-        dashboard: { game: toGameView(reset.game) },
         changedPaths: reset.changedPaths,
         idempotentReplay: reset.idempotentReplay,
         message: reset.idempotentReplay ? "角色重設已完成，這是安全重試結果。" : "角色資料已原子化重設；世界設定已依操作規則保留。",
@@ -230,18 +234,21 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
         extra_hydration_cost: z.number().min(0).max(1000).default(0),
         new_date: z.string().max(100).optional(),
         new_time: z.string().max(100).optional(),
+        outcome_diff: z.record(z.unknown()).optional().describe(
+          "與本次時間事件在同一交易提交的結果，可含 world、player（不得含 survival/date/time）、inventory、npcs、compendium、map、quests；用於原子更新旅行目的地、新人物與新知識。map、npcs、compendium 使用與 aegis_apply_state_diff 相同的唯一 ID、玩家知識與來源規則。",
+        ),
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, true, true),
-      _meta: dashboardMeta("結算遊戲時間…", "生存狀態已更新並自動保存"),
+      _meta: silentMeta("結算遊戲時間…", "生存狀態已更新並自動保存"),
     },
     async (input) => safeTool(async () => {
       const result = await service.advanceTime(
         input.game_id, input.expected_revision, input.idempotency_key, input.elapsed_hours,
         input.activity, input.environment, input.reason, input.extra_hunger_cost,
-        input.extra_hydration_cost, input.new_date, input.new_time,
+        input.extra_hydration_cost, input.new_date, input.new_time, input.outcome_diff,
       );
-      return { ...result, game: toGameView(result.game), dashboard: { game: toGameView(result.game) }, message: "時間與生存狀態已結算，進度已自動保存。" };
+      return { ...result, game: toGameView(result.game), message: "時間、事件結果與生存狀態已原子結算，進度已自動保存。" };
     }),
   );
 
@@ -261,14 +268,14 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, true, true),
-      _meta: dashboardMeta("套用生存事件…", "生存狀態已更新並自動保存"),
+      _meta: silentMeta("套用生存事件…", "生存狀態已更新並自動保存"),
     },
     async (input) => safeTool(async () => {
       const result = await service.applySurvivalEvent(
         input.game_id, input.expected_revision, input.idempotency_key,
         input.hunger_delta, input.hydration_delta, input.reason,
       );
-      return { ...result, game: toGameView(result.game), dashboard: { game: toGameView(result.game) }, message: "生存事件已記錄，進度已自動保存。" };
+      return { ...result, game: toGameView(result.game), message: "生存事件已記錄，進度已自動保存。" };
     }),
   );
 
@@ -287,14 +294,14 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, true, true),
-      _meta: dashboardMeta("使用物品…", "物品與角色狀態已更新並自動保存"),
+      _meta: silentMeta("使用物品…", "物品與角色狀態已更新並自動保存"),
     },
     async (input) => safeTool(async () => {
       const result = await service.useItem(
         input.game_id, input.expected_revision, input.idempotency_key,
         input.item_ref, input.restrictions_met,
       );
-      return { ...result, game: toGameView(result.game), dashboard: { game: toGameView(result.game) }, message: "物品使用結果已提交，進度已自動保存。" };
+      return { ...result, game: toGameView(result.game), message: "物品使用結果已提交，進度已自動保存。" };
     }),
   );
 
@@ -313,13 +320,13 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, false, true),
-      _meta: dashboardMeta("補充容器…", "容器已補充並自動保存"),
+      _meta: silentMeta("補充容器…", "容器已補充並自動保存"),
     },
     async (input) => safeTool(async () => {
       const result = await service.refillContainer(
         input.game_id, input.expected_revision, input.idempotency_key, input.item_ref, input.reason,
       );
-      return { ...result, game: toGameView(result.game), dashboard: { game: toGameView(result.game) }, message: "容器已補充，進度已自動保存。" };
+      return { ...result, game: toGameView(result.game), message: "容器已補充，進度已自動保存。" };
     }),
   );
 
@@ -338,13 +345,13 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, false, true),
-      _meta: dashboardMeta("裝備物品…", "裝備已更新並自動保存"),
+      _meta: silentMeta("裝備物品…", "裝備已更新並自動保存"),
     },
     async (input) => safeTool(async () => {
       const result = await service.equipItem(
         input.game_id, input.expected_revision, input.idempotency_key, input.instance_id, input.slot,
       );
-      return { ...result, game: toGameView(result.game), dashboard: { game: toGameView(result.game) }, message: "裝備狀態已更新，進度已自動保存。" };
+      return { ...result, game: toGameView(result.game), message: "裝備狀態已更新，進度已自動保存。" };
     }),
   );
 
@@ -362,13 +369,13 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, false, true),
-      _meta: dashboardMeta("卸除裝備…", "裝備已卸除並自動保存"),
+      _meta: silentMeta("卸除裝備…", "裝備已卸除並自動保存"),
     },
     async (input) => safeTool(async () => {
       const result = await service.unequipItem(
         input.game_id, input.expected_revision, input.idempotency_key, input.slot,
       );
-      return { ...result, game: toGameView(result.game), dashboard: { game: toGameView(result.game) }, message: "裝備已卸除並返回背包，進度已自動保存。" };
+      return { ...result, game: toGameView(result.game), message: "裝備已卸除並返回背包，進度已自動保存。" };
     }),
   );
 
@@ -377,7 +384,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_show_dashboard",
     {
       title: "顯示 AEGIS 儀表板",
-      description: "顯示目前角色、背包物品詳情、裝備、技能、任務、生存狀態與自動保存狀態的互動面板。",
+      description: "在本回合所有狀態變更完成後，唯一一次顯示角色、背包、裝備、技能、任務、地圖、人物、圖鑑、生存與自動保存狀態的單一互動面板。相同 gameId 與 revision 不得重複顯示。",
       inputSchema: { game_id: gameIdSchema },
       outputSchema: resultOutputSchema,
       annotations: impact(true, false, false, true),
@@ -403,10 +410,8 @@ function impact(
   return { readOnlyHint, openWorldHint, destructiveHint, idempotentHint };
 }
 
-function dashboardMeta(invoking: string, invoked: string) {
+function silentMeta(invoking: string, invoked: string) {
   return {
-    ui: { resourceUri: WIDGET_URI },
-    "openai/outputTemplate": WIDGET_URI,
     "openai/toolInvocation/invoking": invoking,
     "openai/toolInvocation/invoked": invoked,
   };

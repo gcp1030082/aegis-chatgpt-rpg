@@ -5,6 +5,7 @@ import type { ApplyDiffResult, GameState, JsonObject, JsonValue } from "./types.
 import { assertSafeJson, isObject, validateGameState } from "./validation.js";
 import { recordAutomaticSave } from "./commit.js";
 import { normalizeSkills } from "./skills.js";
+import { normalizeKnowledgeState } from "./knowledge.js";
 
 const ALLOWED_TOP_LEVEL = new Set([
   "world",
@@ -70,6 +71,8 @@ export function applyStateDiff(
   if (rawDiff.history !== undefined) {
     applyHistoryPatch(next, rawDiff.history, changedPaths);
   }
+
+  normalizeKnowledgeState(next, true);
 
   ensureAcquisitionRecords(current, next, initializingPlayer, changedPaths);
 
@@ -292,6 +295,9 @@ function entityKey(value: JsonValue): string {
   if (typeof value === "string" || typeof value === "number") return String(value);
   if (!isObject(value)) return "";
   if (value.instanceId !== undefined && value.instanceId !== "") return `instance:${String(value.instanceId)}`;
+  if (value.mapId !== undefined && value.mapId !== "") return `map:${String(value.mapId)}`;
+  if (value.npcId !== undefined && value.npcId !== "") return `npc:${String(value.npcId)}`;
+  if (value.entryId !== undefined && value.entryId !== "") return `entry:${String(value.entryId)}`;
   if (value.id !== undefined && value.id !== "") return `id:${String(value.id)}`;
   if (value.name !== undefined && value.name !== "") {
     const quality = value.quality === undefined ? "" : `:${String(value.quality)}`;

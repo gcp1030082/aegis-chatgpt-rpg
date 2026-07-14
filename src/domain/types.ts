@@ -53,6 +53,9 @@ export interface GameView {
   player: JsonObject;
   inventory: JsonObject[];
   quests: JsonObject[];
+  map: JsonObject[];
+  npcs: JsonObject[];
+  compendium: JsonObject[];
   recentHistory: JsonValue[];
   autoSave: JsonObject;
 }

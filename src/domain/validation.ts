@@ -2,6 +2,7 @@ import { AegisError } from "./errors.js";
 import type { GameState, JsonObject, JsonValue } from "./types.js";
 import { isItemCategory } from "./inventory.js";
 import { collectEquipmentModifiers } from "./equipment.js";
+import { validateKnowledgeState } from "./knowledge.js";
 
 const GAME_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
@@ -90,6 +91,7 @@ export function validateGameState(state: GameState, maxBytes: number): void {
       throw new AegisError("INVALID_STATE", `history.${key} 必須是陣列。`);
     }
   }
+  validateKnowledgeState(state);
 
   state.inventory.forEach((item, index) => {
     if (!isObject(item)) throw new AegisError("INVALID_STATE", `inventory[${index}] 必須是物件。`);

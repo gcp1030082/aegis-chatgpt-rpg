@@ -53,7 +53,7 @@ describe("production HTTP surface", () => {
   it("serves health and initializes MCP on the secret path", async () => {
     const health = await fetch(`${origin}/healthz`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ ok: true, version: "0.4.0" });
+    expect(await health.json()).toMatchObject({ ok: true, version: "0.5.0" });
 
     const healthWithTrailingSlash = await fetch(`${origin}/healthz/`);
     expect(healthWithTrailingSlash.status).toBe(200);
@@ -85,7 +85,7 @@ describe("production HTTP surface", () => {
     const payload = (await initialized.json()) as { result?: { serverInfo?: { name?: string } } };
     expect(payload.result?.serverInfo?.name).toBe("aegis-rpg");
 
-    for (const version of ["v1", "v2", "v3", "v4"]) {
+    for (const version of ["v1", "v2", "v3", "v4", "v5"]) {
       const uri = `ui://widget/aegis-dashboard-${version}.html`;
       const dashboardResource = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
         method: "POST",
@@ -102,6 +102,9 @@ describe("production HTTP surface", () => {
       expect(resourcePayload.result?.contents?.[0]?.uri).toBe(uri);
       expect(resourcePayload.result?.contents?.[0]?.text).toContain('data-inventory-category="special"');
       expect(resourcePayload.result?.contents?.[0]?.text).toContain("飽食度");
+      expect(resourcePayload.result?.contents?.[0]?.text).toContain('data-tab="map"');
+      expect(resourcePayload.result?.contents?.[0]?.text).toContain('data-tab="people"');
+      expect(resourcePayload.result?.contents?.[0]?.text).toContain('data-tab="compendium"');
     }
 
     const toolsList = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
@@ -130,7 +133,11 @@ describe("production HTTP surface", () => {
       "aegis_create_save", "aegis_list_saves", "aegis_load_save",
     ]));
     for (const tool of toolsPayload.result?.tools ?? []) {
-      expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v4.html");
+      if (tool.name === "aegis_show_dashboard") {
+        expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v5.html");
+      } else {
+        expect(tool._meta?.["openai/outputTemplate"]).toBeUndefined();
+      }
       expect(tool.description).toMatch(/[㐀-鿿]/u);
     }
 
@@ -154,28 +161,69 @@ describe("production HTTP surface", () => {
 
     const created = await callTool(10, "aegis_create_game", { game_id: "ui-flow", title: "介面測試" });
     const createdResult = created.result?.structuredContent?.result as {
-      dashboard?: { game?: { revision?: number } };
+      game?: { revision?: number };
+      dashboard?: unknown;
     };
-    expect(createdResult.dashboard?.game?.revision).toBe(0);
+    expect(createdResult.game?.revision).toBe(0);
+    expect(createdResult.dashboard).toBeUndefined();
 
     const prepared = await callTool(11, "aegis_prepare_turn", {
       game_id: "ui-flow", player_input: "觀察周圍，不推進時間",
     });
     const preparedResult = prepared.result?.structuredContent?.result as {
-      dashboard?: { game?: { revision?: number } };
+      turn?: { revision?: number };
+      dashboard?: unknown;
     };
-    expect(preparedResult.dashboard?.game?.revision).toBe(0);
+    expect(preparedResult.turn?.revision).toBe(0);
+    expect(preparedResult.dashboard).toBeUndefined();
 
     const committed = await callTool(12, "aegis_apply_state_diff", {
       game_id: "ui-flow", expected_revision: 0, idempotency_key: "ui-turn-1",
-      diff: { player: { initialized: true, name: "測試者", hp: 10, mp: 8, sp: 6 } },
+      diff: {
+        player: {
+          initialized: true, name: "測試者", hp: 10, mp: 8, sp: 6,
+          location: { mapId: "map-town", region: "北境", location: "白樺鎮" },
+        },
+        map: [
+          { mapId: "map-region", name: "北境", kind: "region", discovery: "known" },
+          {
+            mapId: "map-town", name: "白樺鎮", kind: "town", parentMapId: "map-region", discovery: "visited",
+            facilities: ["旅店"], routes: [{ routeId: "road-1", toMapId: "map-region", danger: "low" }],
+          },
+        ],
+        npcs: [{
+          npcId: "npc-guide", name: "路標守衛", identity: "城門守衛", familiarity: "met",
+          location: { mapId: "map-town", name: "白樺鎮城門", status: "current" },
+          knownInformation: [{ infoId: "info-road", text: "守衛熟悉北方道路", confidence: "medium" }],
+          services: ["道路指引"], questIds: [], memories: [],
+        }],
+        compendium: [{
+          entryId: "entry-moss", name: "銀光苔", category: "plant", stage: "rumor", confidence: "low",
+          sources: [{ type: "npc", name: "路標守衛", npcId: "npc-guide", mapId: "map-town" }],
+          knownFacts: ["據說在潮濕石壁發光"], relatedMapIds: ["map-town"], relatedNpcIds: ["npc-guide"],
+        }],
+      },
     });
     const committedResult = committed.result?.structuredContent?.result as {
-      dashboard?: { game?: { revision?: number; player?: { sp?: number } } };
+      game?: { revision?: number; player?: { sp?: number }; map?: unknown[]; npcs?: unknown[]; compendium?: unknown[] };
+      dashboard?: unknown;
     };
-    expect(committedResult.dashboard?.game).toMatchObject({ revision: 1, player: { sp: 6 } });
+    expect(committedResult.game).toMatchObject({ revision: 1, player: { sp: 6 } });
+    expect(committedResult.game?.map).toHaveLength(2);
+    expect(committedResult.game?.npcs).toHaveLength(1);
+    expect(committedResult.game?.compendium).toHaveLength(1);
+    expect(committedResult.dashboard).toBeUndefined();
 
-    const rejected = await callTool(13, "aegis_apply_state_diff", {
+    const shown = await callTool(13, "aegis_show_dashboard", { game_id: "ui-flow" });
+    const shownResult = shown.result?.structuredContent?.result as {
+      dashboard?: { dashboardKey?: string; game?: { revision?: number; player?: { sp?: number } } };
+    };
+    expect(shownResult.dashboard).toMatchObject({
+      dashboardKey: "ui-flow:1",
+      game: { revision: 1, player: { sp: 6 } },
+    });
+
+    const rejected = await callTool(14, "aegis_apply_state_diff", {
       game_id: "ui-flow", expected_revision: 1, idempotency_key: "ui-no-op",
       diff: { inventory: [], quests: [] },
     });

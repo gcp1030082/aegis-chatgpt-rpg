@@ -119,9 +119,9 @@ export class AegisService {
     next.inventory = [];
     next.quests = [];
     next.history = { recent: [], major: [], summary: [] };
-    next.npcs = next.npcs.map(stripPlayerData);
-    next.map = next.map.map(stripPlayerData);
-    next.compendium = next.compendium.map(stripPlayerData);
+    next.npcs = [];
+    next.map = [];
+    next.compendium = [];
     const changedPaths = resetChangedPaths(current, next);
     if (changedPaths.length === 0) {
       throw new AegisError("NO_STATE_CHANGE", "玩家資料已是未初始化狀態，沒有需要重設的內容。", {
@@ -153,6 +153,7 @@ export class AegisService {
     extraHydrationCost = 0,
     newDate?: string,
     newTime?: string,
+    outcomeDiff?: unknown,
   ) {
     if (!Number.isFinite(hours) || hours <= 0 || hours > 720) {
       throw new AegisError("INVALID_DIFF", "elapsed_hours 必須大於 0 且不得超過 720。 ");
@@ -200,7 +201,7 @@ export class AegisService {
       expectedRevision,
       mutation.key,
       mutation.current,
-      { player: playerPatch, history: { append: [event] } },
+      mergeTimeOutcome(outcomeDiff, playerPatch, event),
       eventReason,
     );
     return {
@@ -487,7 +488,7 @@ export class AegisService {
 
   async dashboard(gameId: string) {
     const game = await this.getGame(gameId);
-    return { game: toGameView(game) };
+    return { game: toGameView(game), dashboardKey: `${game.gameId}:${game.revision}` };
   }
 
   private async mutationContext(
@@ -542,21 +543,34 @@ export class AegisService {
   }
 }
 
-const PLAYER_DATA_KEYS = new Set([
-  "relationship", "relationships", "affinity", "attitude", "favor", "favour", "trust",
-  "playerNotes", "playerProgress", "discovered", "visited", "explored", "unlocked", "read",
-  "progress", "lastInteraction", "關係", "好感度", "信任", "玩家備註", "探索度", "已發現",
-  "已造訪", "已解鎖", "進度",
-]);
-
-function stripPlayerData(record: import("./domain/types.js").JsonObject): import("./domain/types.js").JsonObject {
-  const result = cloneState(record);
-  for (const key of PLAYER_DATA_KEYS) delete result[key];
-  return result;
-}
-
 function asJsonObject(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {};
+}
+
+function mergeTimeOutcome(outcomeDiff: unknown, playerPatch: JsonObject, event: JsonObject): JsonObject {
+  if (outcomeDiff === undefined) return { player: playerPatch, history: { append: [event] } };
+  if (!outcomeDiff || typeof outcomeDiff !== "object" || Array.isArray(outcomeDiff)) {
+    throw new AegisError("INVALID_DIFF", "outcome_diff 必須是物件。");
+  }
+  const outcome = cloneState(outcomeDiff as JsonObject);
+  const allowed = new Set(["world", "player", "inventory", "npcs", "compendium", "map", "quests"]);
+  const unknown = Object.keys(outcome).filter((key) => !allowed.has(key));
+  if (unknown.length) {
+    throw new AegisError("INVALID_DIFF", `outcome_diff 含有不允許的欄位：${unknown.join("、")}。`);
+  }
+  const playerOutcome = outcome.player;
+  if (playerOutcome !== undefined && (!playerOutcome || typeof playerOutcome !== "object" || Array.isArray(playerOutcome))) {
+    throw new AegisError("INVALID_DIFF", "outcome_diff.player 必須是物件。");
+  }
+  const player = playerOutcome as JsonObject | undefined;
+  for (const key of ["survival", "date", "time"] as const) {
+    if (player?.[key] !== undefined) {
+      throw new AegisError("INVALID_DIFF", `outcome_diff.player.${key} 由時間結算器管理，不得重複指定。`);
+    }
+  }
+  outcome.player = { ...(player ?? {}), ...playerPatch };
+  outcome.history = { append: [event] };
+  return outcome;
 }
 
 function resetChangedPaths(left: GameState, right: GameState): string[] {

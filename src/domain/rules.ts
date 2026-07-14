@@ -26,7 +26,7 @@ export const CORE_RULES: RuntimeRule[] = [
     category: "state",
     priority: "Critical",
     triggers: ["state"],
-    instruction: "凡持久狀態改變，必須先成功呼叫 aegis_apply_state_diff；寫入失敗時不得宣稱變更已發生。",
+    instruction: "凡持久狀態改變，必須先成功呼叫對應專用寫入工具或 aegis_apply_state_diff；寫入失敗時不得宣稱變更已發生。",
   },
   {
     id: "PERSISTENCE_001",
@@ -48,6 +48,20 @@ export const CORE_RULES: RuntimeRule[] = [
     priority: "High",
     triggers: ["knowledge", "exploration", "dialogue"],
     instruction: "只呈現玩家能由感官、記憶、技能或可靠來源得知的資訊；未知事實不可直接揭露。",
+  },
+  {
+    id: "KNOWLEDGE_002",
+    category: "knowledge",
+    priority: "Critical",
+    triggers: ["knowledge", "exploration", "dialogue", "movement"],
+    instruction: "新地點、新人物與新圖鑑知識必須先以唯一 mapId、npcId、entryId 與事件結果原子寫入；NPC 秘密、完整逐字稿、未發現知識與未確立精確路線不得進入玩家知識狀態。",
+  },
+  {
+    id: "PANEL_001",
+    category: "presentation",
+    priority: "Critical",
+    triggers: ["presentation"],
+    instruction: "prepare_turn 與 get_game_state 保持靜默；本回合所有寫入完成後最多呼叫一次 aegis_show_dashboard，禁止顯示中間或同 revision 重複面板。",
   },
   {
     id: "COMBAT_001",
