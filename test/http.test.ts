@@ -53,7 +53,7 @@ describe("production HTTP surface", () => {
   it("serves health and initializes MCP on the secret path", async () => {
     const health = await fetch(`${origin}/healthz`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ ok: true, version: "0.5.0" });
+    expect(await health.json()).toMatchObject({ ok: true, version: "0.5.1" });
 
     const healthWithTrailingSlash = await fetch(`${origin}/healthz/`);
     expect(healthWithTrailingSlash.status).toBe(200);
@@ -85,7 +85,7 @@ describe("production HTTP surface", () => {
     const payload = (await initialized.json()) as { result?: { serverInfo?: { name?: string } } };
     expect(payload.result?.serverInfo?.name).toBe("aegis-rpg");
 
-    for (const version of ["v1", "v2", "v3", "v4", "v5"]) {
+    for (const version of ["v1", "v2", "v3", "v4", "v5", "v6"]) {
       const uri = `ui://widget/aegis-dashboard-${version}.html`;
       const dashboardResource = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
         method: "POST",
@@ -134,7 +134,7 @@ describe("production HTTP surface", () => {
     ]));
     for (const tool of toolsPayload.result?.tools ?? []) {
       if (tool.name === "aegis_show_dashboard") {
-        expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v5.html");
+        expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v6.html");
       } else {
         expect(tool._meta?.["openai/outputTemplate"]).toBeUndefined();
       }
@@ -171,10 +171,11 @@ describe("production HTTP surface", () => {
       game_id: "ui-flow", player_input: "觀察周圍，不推進時間",
     });
     const preparedResult = prepared.result?.structuredContent?.result as {
-      turn?: { revision?: number };
+      turn?: { revision?: number; turnId?: string };
       dashboard?: unknown;
     };
     expect(preparedResult.turn?.revision).toBe(0);
+    expect(preparedResult.turn?.turnId).toMatch(/^[0-9a-f-]{36}$/);
     expect(preparedResult.dashboard).toBeUndefined();
 
     const committed = await callTool(12, "aegis_apply_state_diff", {
@@ -214,16 +215,27 @@ describe("production HTTP surface", () => {
     expect(committedResult.game?.compendium).toHaveLength(1);
     expect(committedResult.dashboard).toBeUndefined();
 
-    const shown = await callTool(13, "aegis_show_dashboard", { game_id: "ui-flow" });
+    const turnId = preparedResult.turn?.turnId;
+    if (!turnId) throw new Error("prepare_turn 未回傳 turnId");
+    const shown = await callTool(13, "aegis_show_dashboard", { game_id: "ui-flow", turn_id: turnId });
     const shownResult = shown.result?.structuredContent?.result as {
-      dashboard?: { dashboardKey?: string; game?: { revision?: number; player?: { sp?: number } } };
+      dashboard?: { dashboardKey?: string; turnId?: string; game?: { revision?: number; player?: { sp?: number } } };
     };
     expect(shownResult.dashboard).toMatchObject({
-      dashboardKey: "ui-flow:1",
+      dashboardKey: `ui-flow:${turnId}:1`,
+      turnId,
       game: { revision: 1, player: { sp: 6 } },
     });
 
-    const rejected = await callTool(14, "aegis_apply_state_diff", {
+    const duplicateDashboard = await callTool(14, "aegis_show_dashboard", {
+      game_id: "ui-flow", turn_id: turnId,
+    });
+    expect(duplicateDashboard.result?.isError).toBe(true);
+    expect(duplicateDashboard.result?.structuredContent?.result).toMatchObject({
+      error: { code: "DASHBOARD_ALREADY_SHOWN" },
+    });
+
+    const rejected = await callTool(15, "aegis_apply_state_diff", {
       game_id: "ui-flow", expected_revision: 1, idempotency_key: "ui-no-op",
       diff: { inventory: [], quests: [] },
     });

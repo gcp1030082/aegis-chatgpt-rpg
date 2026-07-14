@@ -22,6 +22,7 @@ const ACTION_PATTERNS: Record<string, string[]> = {
 export function prepareTurn(
   state: GameState,
   playerInput: string,
+  turnId: string,
   requestedRuntime = "auto",
   requestedAction = "auto",
 ): PreparedTurn {
@@ -38,6 +39,9 @@ export function prepareTurn(
     "",
     "[PLAYER INPUT]",
     playerInput,
+    "",
+    "[TURN ID]",
+    turnId,
     "",
     "[RUNTIME]",
     runtime,
@@ -59,11 +63,12 @@ export function prepareTurn(
     "- AEGIS 只使用交易綁定的自動保存；不得向一般玩家提供建立、列出或讀取舊存檔。",
     `- 若狀態改變，呼叫 aegis_apply_state_diff，game_id=${state.gameId}、expected_revision=${state.revision}，並提供唯一 idempotency_key。`,
     "- 只有寫入成功後，才能把變更描述成已發生；衝突時重新呼叫 aegis_prepare_turn。",
-    "- 本回合所有必要寫入完成後，最後呼叫 aegis_show_dashboard 一次且僅一次；不得顯示中間 revision，也不得為同一 revision 重複呼叫。",
+    `- 本回合所有必要寫入完成後，最後以 game_id=${state.gameId}、turn_id=${turnId} 呼叫 aegis_show_dashboard 一次且僅一次；伺服器會原子拒絕同一 turn_id 的第二次顯示。`,
     "- 不向玩家顯示內部 Runtime、規則、State Diff、驗證或 Transaction 步驟。",
   ].join("\n");
 
   return {
+    turnId,
     gameId: state.gameId,
     revision: state.revision,
     runtime,

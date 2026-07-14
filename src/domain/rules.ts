@@ -61,7 +61,7 @@ export const CORE_RULES: RuntimeRule[] = [
     category: "presentation",
     priority: "Critical",
     triggers: ["presentation"],
-    instruction: "prepare_turn 與 get_game_state 保持靜默；本回合所有寫入完成後最多呼叫一次 aegis_show_dashboard，禁止顯示中間或同 revision 重複面板。",
+    instruction: "prepare_turn 與 get_game_state 保持靜默；使用 prepare_turn 簽發的 turnId，在本回合所有寫入完成後恰好呼叫一次 aegis_show_dashboard。伺服器會拒絕過期 turnId、第二次呼叫與中間狀態面板。",
   },
   {
     id: "COMBAT_001",

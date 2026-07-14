@@ -44,6 +44,20 @@ export interface SaveSummary {
   createdAt: string;
 }
 
+export interface TurnRecord {
+  turnId: string;
+  gameId: string;
+  preparedRevision: number;
+  preparedAt: string;
+  dashboardRevision: number | null;
+  dashboardShownAt: string | null;
+}
+
+export interface DashboardClaim {
+  game: GameState;
+  turn: TurnRecord;
+}
+
 export interface GameView {
   gameId: string;
   title: string;
@@ -61,6 +75,7 @@ export interface GameView {
 }
 
 export interface PreparedTurn {
+  turnId: string;
   gameId: string;
   revision: number;
   runtime: string;

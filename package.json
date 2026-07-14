@@ -1,6 +1,6 @@
 {
   "name": "aegis-chatgpt-rpg",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "AEGIS persistent sandbox RPG as a ChatGPT App backed by MCP.",
   "type": "module",
@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "verify:postgres": "tsx scripts/verify-postgres.ts",
     "check": "npm run typecheck && npm test"
   },
   "engines": {

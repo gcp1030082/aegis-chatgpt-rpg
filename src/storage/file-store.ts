@@ -3,7 +3,13 @@ import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/pro
 import { join } from "node:path";
 import { cloneState } from "../domain/default-state.js";
 import { AegisError } from "../domain/errors.js";
-import type { GameState, SaveRecord, SaveSummary } from "../domain/types.js";
+import type {
+  DashboardClaim,
+  GameState,
+  SaveRecord,
+  SaveSummary,
+  TurnRecord,
+} from "../domain/types.js";
 import type { GameStore } from "./store.js";
 import { KeyMutex } from "./mutex.js";
 
@@ -11,16 +17,19 @@ export class FileGameStore implements GameStore {
   private readonly mutex = new KeyMutex();
   private readonly gamesDir: string;
   private readonly savesDir: string;
+  private readonly turnsDir: string;
 
   constructor(private readonly dataDir: string) {
     this.gamesDir = join(dataDir, "games");
     this.savesDir = join(dataDir, "saves");
+    this.turnsDir = join(dataDir, "turns");
   }
 
   async initialize(): Promise<void> {
     await Promise.all([
       mkdir(this.gamesDir, { recursive: true }),
       mkdir(this.savesDir, { recursive: true }),
+      mkdir(this.turnsDir, { recursive: true }),
     ]);
   }
 
@@ -60,6 +69,37 @@ export class FileGameStore implements GameStore {
       }
       await atomicWrite(this.gamePath(gameId), next);
       return cloneState(next);
+    });
+  }
+
+  async beginTurn(turn: TurnRecord): Promise<TurnRecord> {
+    return this.mutex.run(turn.gameId, async () => {
+      const current = await this.getGame(turn.gameId);
+      if (!current) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${turn.gameId}。`);
+      if (current.revision !== turn.preparedRevision) {
+        throw new AegisError("REVISION_CONFLICT", "遊戲狀態已更新，請重新準備回合。", {
+          expectedRevision: turn.preparedRevision,
+          actualRevision: current.revision,
+        });
+      }
+      await atomicWrite(this.turnPath(turn.gameId), turn);
+      return cloneState(turn);
+    });
+  }
+
+  async claimDashboard(gameId: string, turnId: string): Promise<DashboardClaim> {
+    return this.mutex.run(gameId, async () => {
+      const game = await this.getGame(gameId);
+      if (!game) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${gameId}。`);
+      const turn = await this.getTurn(gameId);
+      assertDashboardTurn(turn, turnId);
+      const claimed: TurnRecord = {
+        ...turn,
+        dashboardRevision: game.revision,
+        dashboardShownAt: new Date().toISOString(),
+      };
+      await atomicWrite(this.turnPath(gameId), claimed);
+      return { game: cloneState(game), turn: cloneState(claimed) };
     });
   }
 
@@ -112,6 +152,33 @@ export class FileGameStore implements GameStore {
 
   private gamePath(gameId: string): string {
     return join(this.gamesDir, `${gameId}.json`);
+  }
+
+  private turnPath(gameId: string): string {
+    return join(this.turnsDir, `${gameId}.json`);
+  }
+
+  private async getTurn(gameId: string): Promise<TurnRecord | null> {
+    try {
+      return JSON.parse(await readFile(this.turnPath(gameId), "utf8")) as TurnRecord;
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) return null;
+      throw error;
+    }
+  }
+}
+
+function assertDashboardTurn(turn: TurnRecord | null, turnId: string): asserts turn is TurnRecord {
+  if (!turn) {
+    throw new AegisError("TURN_NOT_PREPARED", "尚未準備可顯示面板的回合，請先呼叫 aegis_prepare_turn。");
+  }
+  if (turn.turnId !== turnId) {
+    throw new AegisError("TURN_SUPERSEDED", "此回合已被較新的回合取代，請使用最新的 turn_id。");
+  }
+  if (turn.dashboardShownAt !== null) {
+    throw new AegisError("DASHBOARD_ALREADY_SHOWN", "本回合已顯示過 AEGIS 面板，不得再次顯示。", {
+      dashboardRevision: turn.dashboardRevision,
+    });
   }
 }
 

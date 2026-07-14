@@ -4,7 +4,7 @@ import { survivalView } from "./survival.js";
 import { normalizeSkills } from "./skills.js";
 import { normalizeKnowledgeState, playerKnowledgeView } from "./knowledge.js";
 
-export const AEGIS_VERSION = "6.7.7-mcp.5";
+export const AEGIS_VERSION = "6.7.7-mcp.5.1";
 
 export function defaultGameState(gameId: string, title = "AEGIS 冒險"): GameState {
   const now = new Date().toISOString();

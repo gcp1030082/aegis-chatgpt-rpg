@@ -254,7 +254,7 @@
       }, { passive: true });
 
       const bridgeReady = request("ui/initialize", {
-        appInfo: { name: "aegis-dashboard", version: "0.5.0" },
+        appInfo: { name: "aegis-dashboard", version: "0.5.1" },
         appCapabilities: {},
         protocolVersion: "2026-01-26",
       }).then(() => notify("ui/notifications/initialized", {}));
@@ -265,10 +265,13 @@
         const gameId = String(candidate.game.gameId || "");
         const revision = Number(candidate.game.revision);
         if (!gameId || !Number.isInteger(revision) || revision < 0) return;
-        const key = candidate.dashboardKey || `${gameId}:${revision}`;
+        const turnId = String(candidate.turnId || "");
+        const key = candidate.dashboardKey || (turnId
+          ? `${gameId}:${turnId}:${revision}`
+          : `${gameId}:${revision}`);
         const latest = latestRevisionByGame.get(gameId);
-        if (key === renderedDashboardKey || (Number.isInteger(latest) && revision <= latest)) return;
-        latestRevisionByGame.set(gameId, revision);
+        if (key === renderedDashboardKey || (Number.isInteger(latest) && revision < latest)) return;
+        latestRevisionByGame.set(gameId, Number.isInteger(latest) ? Math.max(latest, revision) : revision);
         renderedDashboardKey = key;
         dashboard = candidate;
         render();

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { AppConfig } from "./config.js";
 import { applyStateDiff } from "./domain/diff.js";
 import { cloneState, defaultGameState, defaultPlayerState, migrateGameState, toGameView } from "./domain/default-state.js";
@@ -49,7 +49,17 @@ export class AegisService {
   ) {
     const input = cleanText(playerInput, 4000);
     if (!input) throw new AegisError("INVALID_DIFF", "玩家輸入不可為空白。");
-    return prepareTurn(await this.getGame(gameId), input, runtime, actionType);
+    const game = await this.getGame(gameId);
+    const turnId = randomUUID();
+    await this.store.beginTurn({
+      turnId,
+      gameId: game.gameId,
+      preparedRevision: game.revision,
+      preparedAt: new Date().toISOString(),
+      dashboardRevision: null,
+      dashboardShownAt: null,
+    });
+    return prepareTurn(game, input, turnId, runtime, actionType);
   }
 
   async applyDiff(
@@ -486,9 +496,17 @@ export class AegisService {
     return { game, idempotentReplay: false };
   }
 
-  async dashboard(gameId: string) {
-    const game = await this.getGame(gameId);
-    return { game: toGameView(game), dashboardKey: `${game.gameId}:${game.revision}` };
+  async dashboard(gameId: string, turnId: string) {
+    assertGameId(gameId);
+    const id = cleanTurnId(turnId);
+    const claimed = await this.store.claimDashboard(gameId, id);
+    const game = migrateGameState(claimed.game);
+    validateGameState(game, this.config.maxStateBytes);
+    return {
+      game: toGameView(game),
+      turnId: claimed.turn.turnId,
+      dashboardKey: `${game.gameId}:${claimed.turn.turnId}:${game.revision}`,
+    };
   }
 
   private async mutationContext(
@@ -664,6 +682,14 @@ function cleanIdempotencyKey(value: string): string {
     );
   }
   return key;
+}
+
+function cleanTurnId(value: string): string {
+  const turnId = (value ?? "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(turnId)) {
+    throw new AegisError("INVALID_DIFF", "turn_id 必須是 aegis_prepare_turn 回傳的有效識別碼。");
+  }
+  return turnId;
 }
 
 function assertRevision(value: number): void {

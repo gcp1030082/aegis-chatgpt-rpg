@@ -11,7 +11,7 @@ describe("AEGIS dashboard widget", () => {
     expect(html).toContain('data-tab="equipment"');
     expect(html).toContain('data-tab="skills"');
     expect(html).toContain("點擊物品可查看數量、效果、來源與完整資料");
-    expect(html).toContain('version: "0.5.0"');
+    expect(html).toContain('version: "0.5.1"');
     for (const category of ["all", "consumable", "equipment", "misc", "special"]) {
       expect(html).toContain(`data-inventory-category="${category}"`);
     }
@@ -46,12 +46,14 @@ describe("AEGIS dashboard widget", () => {
     expect(html).not.toContain("innerHTML");
   });
 
-  it("deduplicates the same revision and rejects stale panel updates", async () => {
+  it("deduplicates the same turn, allows a new turn at the same revision, and rejects stale updates", async () => {
     const html = await readFile(resolve("public/aegis-widget.html"), "utf8");
     expect(html).toContain("renderedDashboardKey");
     expect(html).toContain("latestRevisionByGame");
-    expect(html).toContain("revision <= latest");
-    expect(html).toContain('candidate.dashboardKey || `${gameId}:${revision}`');
+    expect(html).toContain("revision < latest");
+    expect(html).not.toContain("revision <= latest");
+    expect(html).toContain('const turnId = String(candidate.turnId || "")');
+    expect(html).toContain('`${gameId}:${turnId}:${revision}`');
   });
 
   it("contains syntactically valid widget JavaScript", async () => {

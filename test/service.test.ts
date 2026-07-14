@@ -325,4 +325,50 @@ describe("AegisService", () => {
       .rejects.toMatchObject({ code: "NO_STATE_CHANGE", details: { changedPaths: [] } });
     expect((await service.getGame("main")).revision).toBe(0);
   });
+
+  it("persists turnId locks and atomically permits exactly one dashboard per turn", async () => {
+    await service.createGame("main");
+    await expect(service.dashboard("main", "00000000-0000-4000-8000-000000000000"))
+      .rejects.toMatchObject({ code: "TURN_NOT_PREPARED" });
+
+    const unchanged = await service.getGame("main");
+    const superseded = await service.prepareTurn("main", "先觀察門口");
+    const active = await service.prepareTurn("main", "改為觀察窗外");
+    expect(active.turnId).not.toBe(superseded.turnId);
+    expect((await service.getGame("main"))).toMatchObject({
+      revision: unchanged.revision,
+      updatedAt: unchanged.updatedAt,
+    });
+    await expect(service.dashboard("main", superseded.turnId))
+      .rejects.toMatchObject({ code: "TURN_SUPERSEDED" });
+
+    const concurrent = await Promise.allSettled([
+      service.dashboard("main", active.turnId),
+      service.dashboard("main", active.turnId),
+    ]);
+    const fulfilled = concurrent.filter((result) => result.status === "fulfilled");
+    const rejected = concurrent.filter((result) => result.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+      code: "DASHBOARD_ALREADY_SHOWN",
+    });
+
+    const restartedStore = new FileGameStore(directory);
+    await restartedStore.initialize();
+    const restarted = new AegisService(restartedStore, {
+      maxDiffBytes: 512 * 1024,
+      maxStateBytes: 2 * 1024 * 1024,
+    });
+    await expect(restarted.dashboard("main", active.turnId))
+      .rejects.toMatchObject({ code: "DASHBOARD_ALREADY_SHOWN" });
+
+    const sameRevisionTurn = await restarted.prepareTurn("main", "再看一次窗外");
+    const sameRevisionDashboard = await restarted.dashboard("main", sameRevisionTurn.turnId);
+    expect(sameRevisionDashboard.game.revision).toBe(unchanged.revision);
+    expect(sameRevisionDashboard.dashboardKey).toBe(
+      `main:${sameRevisionTurn.turnId}:${unchanged.revision}`,
+    );
+    await restartedStore.close();
+  });
 });

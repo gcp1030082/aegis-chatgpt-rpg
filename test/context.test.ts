@@ -11,9 +11,12 @@ describe("runtime context", () => {
   it("includes revision and commit contract", () => {
     const state = defaultGameState("main");
     state.revision = 7;
-    const turn = prepareTurn(state, "我觀察酒館裡的人");
+    const turnId = "11111111-1111-4111-8111-111111111111";
+    const turn = prepareTurn(state, "我觀察酒館裡的人", turnId);
+    expect(turn.turnId).toBe(turnId);
     expect(turn.revision).toBe(7);
     expect(turn.runtimeContext).toContain("expected_revision=7");
+    expect(turn.runtimeContext).toContain(`turn_id=${turnId}`);
     expect(turn.runtimeContext).toContain("aegis_apply_state_diff");
     expect(turn.actionTags).toContain("exploration");
   });
