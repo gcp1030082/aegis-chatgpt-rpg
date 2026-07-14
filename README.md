@@ -107,6 +107,8 @@ AEGIS_POSTGRES_E2E_URL="postgresql://..." npm run verify:postgres
 
 驗收程式會使用隨機 `game_id` 測試狀態、災難復原快照、重啟後持久性、並發面板鎖，再清除自己的測試資料。需要 SSL 時加上 `AEGIS_POSTGRES_E2E_SSL=true`。
 
+只有手機或沒有本機終端機時，可在 GitHub Repository 的 Actions secrets 新增 `AEGIS_POSTGRES_E2E_URL`，值填 Render PostgreSQL 的 External Database URL；接著手動執行 **PostgreSQL E2E** workflow。Secret 不會寫入 Repository，workflow 會強制使用 SSL，並執行同一套隨機資料驗收與清理流程。
+
 MCP Inspector：
 
 ```bash

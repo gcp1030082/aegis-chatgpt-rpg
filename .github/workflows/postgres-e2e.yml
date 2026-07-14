@@ -1,0 +1,34 @@
+name: PostgreSQL E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgres-e2e
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AEGIS_POSTGRES_E2E_URL: ${{ secrets.AEGIS_POSTGRES_E2E_URL }}
+      AEGIS_POSTGRES_E2E_SSL: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Confirm the database secret exists
+        shell: bash
+        run: |
+          if [ -z "$AEGIS_POSTGRES_E2E_URL" ]; then
+            echo "::error::Missing repository secret AEGIS_POSTGRES_E2E_URL."
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm run verify:postgres
