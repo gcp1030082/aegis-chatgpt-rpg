@@ -1,8 +1,12 @@
 import { Pool, type PoolClient } from "pg";
 import { AegisError } from "../domain/errors.js";
+import { needsGameMigration } from "../domain/default-state.js";
 import type {
   DashboardClaim,
   GameState,
+  MigrationBackup,
+  MigrationCommit,
+  PrivateWorldState,
   SaveRecord,
   SaveSummary,
   TurnRecord,
@@ -45,8 +49,24 @@ export class PostgresGameStore implements GameStore {
         dashboard_revision INTEGER CHECK (dashboard_revision >= 0),
         dashboard_shown_at TIMESTAMPTZ
       );
+      CREATE TABLE IF NOT EXISTS aegis_private_world (
+        game_id TEXT PRIMARY KEY REFERENCES aegis_games(game_id) ON DELETE CASCADE,
+        state JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS aegis_migration_backups (
+        backup_id TEXT PRIMARY KEY,
+        game_id TEXT NOT NULL REFERENCES aegis_games(game_id) ON DELETE CASCADE,
+        migration_key TEXT NOT NULL,
+        source_version TEXT NOT NULL,
+        source_revision INTEGER NOT NULL,
+        state JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS aegis_saves_game_created_idx
         ON aegis_saves (game_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS aegis_migration_backups_game_created_idx
+        ON aegis_migration_backups (game_id, created_at DESC);
     `);
   }
 
@@ -88,6 +108,127 @@ export class PostgresGameStore implements GameStore {
       expectedRevision,
       actualRevision: current.revision,
     });
+  }
+
+  async createMigrationBackup(backup: MigrationBackup): Promise<MigrationBackup> {
+    await this.pool.query(
+      `INSERT INTO aegis_migration_backups (
+         backup_id, game_id, migration_key, source_version, source_revision, state, created_at
+       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+       ON CONFLICT (backup_id) DO NOTHING`,
+      [backup.backupId, backup.gameId, backup.migrationKey, backup.sourceVersion,
+        backup.sourceRevision, JSON.stringify(backup.state), backup.createdAt],
+    );
+    await this.pool.query(
+      `DELETE FROM aegis_migration_backups
+       WHERE game_id = $1 AND backup_id NOT IN (
+         SELECT backup_id FROM aegis_migration_backups WHERE game_id = $1 ORDER BY created_at DESC LIMIT 3
+       )`,
+      [backup.gameId],
+    );
+    return backup;
+  }
+
+  async commitMigration(migration: MigrationCommit): Promise<GameState> {
+    return this.transaction(async (client) => {
+      const gameId = migration.game.gameId;
+      const result = await client.query<{ revision: number; state: GameState }>(
+        "SELECT revision, state FROM aegis_games WHERE game_id = $1 FOR UPDATE",
+        [gameId],
+      );
+      const current = result.rows[0];
+      if (!current) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${gameId}。`);
+      if (!needsGameMigration(current.state)) return current.state;
+      if (current.revision !== migration.expectedRevision) {
+        throw new AegisError("REVISION_CONFLICT", "遷移期間遊戲狀態已更新，請重新讀取。", {
+          expectedRevision: migration.expectedRevision,
+          actualRevision: current.revision,
+        });
+      }
+      await client.query(
+        `INSERT INTO aegis_migration_backups (
+           backup_id, game_id, migration_key, source_version, source_revision, state, created_at
+         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+         ON CONFLICT (backup_id) DO NOTHING`,
+        [
+          migration.backup.backupId,
+          gameId,
+          migration.backup.migrationKey,
+          migration.backup.sourceVersion,
+          migration.backup.sourceRevision,
+          JSON.stringify(migration.backup.state),
+          migration.backup.createdAt,
+        ],
+      );
+      await client.query(
+        `INSERT INTO aegis_private_world (game_id, state, updated_at)
+         VALUES ($1, $2::jsonb, $3)
+         ON CONFLICT (game_id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at`,
+        [gameId, JSON.stringify(migration.privateWorld), migration.privateWorld.updatedAt],
+      );
+      const updated = await client.query<{ state: GameState }>(
+        `UPDATE aegis_games SET revision = $2, state = $3::jsonb, updated_at = $4
+         WHERE game_id = $1 RETURNING state`,
+        [gameId, migration.game.revision, JSON.stringify(migration.game), migration.game.updatedAt],
+      );
+      await client.query(
+        `DELETE FROM aegis_migration_backups
+         WHERE game_id = $1 AND backup_id NOT IN (
+           SELECT backup_id FROM aegis_migration_backups
+           WHERE game_id = $1 ORDER BY created_at DESC LIMIT 3
+         )`,
+        [gameId],
+      );
+      const row = updated.rows[0];
+      if (!row) throw new AegisError("STORAGE_ERROR", "提交遊戲遷移失敗。");
+      return row.state;
+    });
+  }
+
+  async getPrivateWorld(gameId: string): Promise<PrivateWorldState | null> {
+    const result = await this.pool.query<{ state: PrivateWorldState }>(
+      "SELECT state FROM aegis_private_world WHERE game_id = $1",
+      [gameId],
+    );
+    return result.rows[0]?.state ?? null;
+  }
+
+  async putPrivateWorld(state: PrivateWorldState): Promise<PrivateWorldState> {
+    const result = await this.pool.query<{ state: PrivateWorldState }>(
+      `INSERT INTO aegis_private_world (game_id, state, updated_at)
+       VALUES ($1, $2::jsonb, $3)
+       ON CONFLICT (game_id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at
+       RETURNING state`,
+      [state.gameId, JSON.stringify(state), state.updatedAt],
+    );
+    const row = result.rows[0];
+    if (!row) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${state.gameId}。`);
+    return row.state;
+  }
+
+  async listMigrationBackups(gameId: string): Promise<MigrationBackup[]> {
+    const result = await this.pool.query<{
+      backup_id: string;
+      game_id: string;
+      migration_key: string;
+      source_version: string;
+      source_revision: number;
+      created_at: Date | string;
+      state: GameState;
+    }>(
+      `SELECT backup_id, game_id, migration_key, source_version, source_revision, created_at, state
+       FROM aegis_migration_backups WHERE game_id = $1 ORDER BY created_at DESC`,
+      [gameId],
+    );
+    return result.rows.map((row) => ({
+      backupId: row.backup_id,
+      gameId: row.game_id,
+      migrationKey: row.migration_key,
+      sourceVersion: row.source_version,
+      sourceRevision: row.source_revision,
+      createdAt: toIsoString(row.created_at),
+      state: row.state,
+    }));
   }
 
   async beginTurn(turn: TurnRecord): Promise<TurnRecord> {

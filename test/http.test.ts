@@ -53,7 +53,7 @@ describe("production HTTP surface", () => {
   it("serves health and initializes MCP on the secret path", async () => {
     const health = await fetch(`${origin}/healthz`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ ok: true, version: "0.5.2" });
+    expect(await health.json()).toMatchObject({ ok: true, version: "0.6.0" });
 
     const healthWithTrailingSlash = await fetch(`${origin}/healthz/`);
     expect(healthWithTrailingSlash.status).toBe(200);
@@ -85,7 +85,7 @@ describe("production HTTP surface", () => {
     const payload = (await initialized.json()) as { result?: { serverInfo?: { name?: string } } };
     expect(payload.result?.serverInfo?.name).toBe("aegis-rpg");
 
-    for (const version of ["v1", "v2", "v3", "v4", "v5", "v6"]) {
+    for (const version of ["v1", "v2", "v3", "v4", "v5", "v6", "v7"]) {
       const uri = `ui://widget/aegis-dashboard-${version}.html`;
       const dashboardResource = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
         method: "POST",
@@ -139,7 +139,7 @@ describe("production HTTP surface", () => {
     ]));
     for (const tool of toolsPayload.result?.tools ?? []) {
       if (tool.name === "aegis_show_dashboard") {
-        expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v6.html");
+        expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v7.html");
         expect(tool.inputSchema?.properties).toHaveProperty("turn_id");
         expect(tool.inputSchema?.required).toContain("game_id");
         expect(tool.inputSchema?.required).not.toContain("turn_id");
@@ -148,6 +148,11 @@ describe("production HTTP surface", () => {
       }
       expect(tool.description).toMatch(/[㐀-鿿]/u);
     }
+    const advance = toolsPayload.result?.tools?.find((tool) => tool.name === "aegis_advance_time");
+    expect(advance?.inputSchema?.properties).toHaveProperty("elapsed_minutes");
+    expect(advance?.inputSchema?.properties).toHaveProperty("elapsed_hours");
+    expect(advance?.inputSchema?.required ?? []).not.toContain("elapsed_minutes");
+    expect(advance?.inputSchema?.required ?? []).not.toContain("elapsed_hours");
 
     const callTool = async (id: number, name: string, args: Record<string, unknown>) => {
       const response = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
@@ -163,6 +168,7 @@ describe("production HTTP surface", () => {
         result?: {
           isError?: boolean;
           structuredContent?: { result?: Record<string, unknown> };
+          content?: Array<{ type?: string; text?: string }>;
         };
       };
     };
@@ -234,6 +240,9 @@ describe("production HTTP surface", () => {
       turnId,
       game: { revision: 1, player: { sp: 6 } },
     });
+    expect(shown.result?.content).toEqual([
+      { type: "text", text: "AEGIS 綜合面板已依最新權威狀態產生。" },
+    ]);
 
     const duplicateDashboard = await callTool(14, "aegis_show_dashboard", {
       game_id: "ui-flow", turn_id: turnId,

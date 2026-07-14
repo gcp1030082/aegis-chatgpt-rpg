@@ -85,7 +85,28 @@ export function calculateTimeSurvival(
   extraHydrationCost = 0,
   balance: JsonObject = {},
 ) {
+  return calculateTimeSurvivalMinutes(
+    player,
+    Math.round(hours * 60),
+    activity,
+    environment,
+    extraHungerCost,
+    extraHydrationCost,
+    balance,
+  );
+}
+
+export function calculateTimeSurvivalMinutes(
+  player: JsonObject,
+  elapsedMinutes: number,
+  activity: SurvivalActivity,
+  environment: SurvivalEnvironment,
+  extraHungerCost = 0,
+  extraHydrationCost = 0,
+  balance: JsonObject = {},
+) {
   const before = survivalSnapshot(player);
+  const hours = elapsedMinutes / 60;
   const [activityHunger, activityHydration] = ACTIVITY_FACTORS[activity];
   const [environmentHunger, environmentHydration] = ENVIRONMENT_FACTORS[environment];
   const modifiers = collectRateModifiers(player);
@@ -100,7 +121,7 @@ export function calculateTimeSurvival(
   const after: SurvivalSnapshot = {
     hunger: clamp(before.hunger - hungerCost, 0, 100),
     hydration: clamp(before.hydration - hydrationCost, 0, 100),
-    elapsedGameMinutes: before.elapsedGameMinutes + Math.round(hours * 60),
+    elapsedGameMinutes: before.elapsedGameMinutes + elapsedMinutes,
   };
   return {
     before,

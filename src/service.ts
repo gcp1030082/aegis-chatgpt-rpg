@@ -1,23 +1,37 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AppConfig } from "./config.js";
 import { applyStateDiff } from "./domain/diff.js";
-import { cloneState, defaultGameState, defaultPlayerState, migrateGameState, toGameView } from "./domain/default-state.js";
+import {
+  buildGameMigration,
+  cloneState,
+  createMigrationBackup,
+  defaultGameState,
+  defaultPlayerState,
+  defaultPrivateWorldState,
+  migrateGameState,
+  needsGameMigration,
+  toGameView,
+} from "./domain/default-state.js";
 import { AegisError } from "./domain/errors.js";
 import { categorizeItem } from "./domain/inventory.js";
 import { equipInventoryItem, unequipInventoryItem } from "./domain/equipment.js";
 import { prepareTurn } from "./domain/context.js";
 import {
   adjustSurvival,
-  calculateTimeSurvival,
+  calculateTimeSurvivalMinutes,
   survivalPatch,
   survivalSnapshot,
   type SurvivalActivity,
   type SurvivalEnvironment,
 } from "./domain/survival.js";
-import type { GameState, JsonObject, SaveRecord } from "./domain/types.js";
+import type { GameState, JsonObject, JsonValue, SaveRecord } from "./domain/types.js";
 import { assertGameId, validateGameState } from "./domain/validation.js";
 import type { GameStore } from "./storage/store.js";
 import { recordAutomaticSave } from "./domain/commit.js";
+import { advanceGameClock } from "./domain/clock.js";
+import { newHistoryEvent } from "./domain/history.js";
+import { assertNoPrivateStateFields, assertNoServerManagedFields } from "./domain/metadata.js";
+import { toDashboardView } from "./domain/dashboard.js";
 
 export class AegisService {
   constructor(
@@ -29,16 +43,36 @@ export class AegisService {
     assertGameId(gameId);
     const state = defaultGameState(gameId, cleanText(title, 100) || "AEGIS 冒險");
     validateGameState(state, this.config.maxStateBytes);
-    return this.store.createGame(state);
+    const created = await this.store.createGame(state);
+    await this.store.putPrivateWorld(defaultPrivateWorldState(gameId, created.updatedAt));
+    return created;
   }
 
   async getGame(gameId: string): Promise<GameState> {
     assertGameId(gameId);
     const stored = await this.store.getGame(gameId);
-    const state = stored ? migrateGameState(stored) : null;
-    if (!state) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${gameId}。`);
+    if (!stored) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${gameId}。`);
+    let state = stored;
+    if (needsGameMigration(stored)) {
+      const sourceVersion = stored.schemaVersion || stored.version || "legacy";
+      const backup = createMigrationBackup(stored, sourceVersion);
+      await this.store.createMigrationBackup(backup);
+      const migrated = buildGameMigration(stored, await this.store.getPrivateWorld(gameId));
+      validateGameState(migrated.game, this.config.maxStateBytes);
+      state = await this.store.commitMigration({
+        expectedRevision: stored.revision,
+        game: migrated.game,
+        privateWorld: migrated.privateWorld,
+        backup,
+      });
+    }
     validateGameState(state, this.config.maxStateBytes);
     return state;
+  }
+
+  async getPrivateWorldInternal(gameId: string) {
+    await this.getGame(gameId);
+    return await this.store.getPrivateWorld(gameId) ?? defaultPrivateWorldState(gameId);
   }
 
   async prepareTurn(
@@ -155,19 +189,18 @@ export class AegisService {
     gameId: string,
     expectedRevision: number,
     idempotencyKey: string,
-    hours: number,
+    hours: number | undefined,
     activity: SurvivalActivity,
     environment: SurvivalEnvironment,
     reason: string,
     extraHungerCost = 0,
     extraHydrationCost = 0,
-    newDate?: string,
-    newTime?: string,
+    _newDate?: string,
+    _newTime?: string,
     outcomeDiff?: unknown,
+    elapsedMinutesInput?: number,
   ) {
-    if (!Number.isFinite(hours) || hours <= 0 || hours > 720) {
-      throw new AegisError("INVALID_DIFF", "elapsed_hours 必須大於 0 且不得超過 720。 ");
-    }
+    const elapsedMinutes = normalizeElapsedMinutes(elapsedMinutesInput, hours);
     assertNonnegativeCost(extraHungerCost, "extra_hunger_cost");
     assertNonnegativeCost(extraHydrationCost, "extra_hydration_cost");
     const eventReason = cleanText(reason, 200);
@@ -185,27 +218,46 @@ export class AegisService {
         stageChanges: [],
       };
     }
-    const calculation = calculateTimeSurvival(
+    const calculation = calculateTimeSurvivalMinutes(
       mutation.current.player,
-      hours,
+      elapsedMinutes,
       activity,
       environment,
       extraHungerCost,
       extraHydrationCost,
       asJsonObject(mutation.current.world.survivalBalance),
     );
-    const playerPatch: JsonObject = { survival: survivalPatch(calculation.after) };
-    if (cleanText(newDate, 100)) playerPatch.date = cleanText(newDate, 100);
-    if (cleanText(newTime, 100)) playerPatch.time = cleanText(newTime, 100);
-    const event = {
-      type: "time_elapsed",
-      reason: eventReason,
-      elapsedHours: hours,
-      activity,
-      environment,
-      hungerChange: -calculation.hungerCost,
-      hydrationChange: -calculation.hydrationCost,
+    const clockCandidate = cloneState(mutation.current);
+    advanceGameClock(clockCandidate, elapsedMinutes);
+    const playerPatch: JsonObject = {
+      survival: survivalPatch(calculation.after),
+      clock: cloneState(clockCandidate.player.clock ?? {}),
+      date: String(clockCandidate.player.date ?? ""),
+      time: String(clockCandidate.player.time ?? ""),
+      season: String(clockCandidate.player.season ?? ""),
     };
+    const fromMapId = String(asJsonObject(mutation.current.player.location).mapId ?? "");
+    const outcomePlayer = asJsonObject(asJsonObject(outcomeDiff).player);
+    const toMapId = String(asJsonObject(outcomePlayer.location).mapId ?? fromMapId);
+    const event = activity === "travel"
+      ? newHistoryEvent("travel", {
+          summary: eventReason,
+          fromMapId,
+          toMapId,
+          actualTravelMinutes: elapsedMinutes,
+          activity,
+          environment,
+          hungerChange: -calculation.hungerCost,
+          hydrationChange: -calculation.hydrationCost,
+        })
+      : newHistoryEvent("time_elapsed", {
+          summary: eventReason,
+          elapsedMinutes,
+          activity,
+          environment,
+          hungerChange: -calculation.hungerCost,
+          hydrationChange: -calculation.hydrationCost,
+        });
     const committed = await this.commitGeneratedDiff(
       gameId,
       expectedRevision,
@@ -499,11 +551,12 @@ export class AegisService {
   async dashboard(gameId: string, turnId?: string) {
     assertGameId(gameId);
     const id = turnId === undefined ? undefined : cleanTurnId(turnId);
+    await this.getGame(gameId);
     const claimed = await this.store.claimDashboard(gameId, id);
-    const game = migrateGameState(claimed.game);
+    const game = claimed.game;
     validateGameState(game, this.config.maxStateBytes);
     return {
-      game: toGameView(game),
+      game: toDashboardView(game),
       turnId: claimed.turn.turnId,
       dashboardKey: `${game.gameId}:${claimed.turn.turnId}:${game.revision}`,
     };
@@ -540,6 +593,7 @@ export class AegisService {
       maxStateBytes: this.config.maxStateBytes,
       idempotencyKey: key,
       turnSummary: summary,
+      trustedServerFields: true,
     });
     const game = await this.store.compareAndSwap(gameId, expectedRevision, result.game);
     return { game, changedPaths: result.changedPaths };
@@ -570,8 +624,10 @@ function mergeTimeOutcome(outcomeDiff: unknown, playerPatch: JsonObject, event: 
   if (!outcomeDiff || typeof outcomeDiff !== "object" || Array.isArray(outcomeDiff)) {
     throw new AegisError("INVALID_DIFF", "outcome_diff 必須是物件。");
   }
+  assertNoServerManagedFields(outcomeDiff, "outcome_diff");
+  assertNoPrivateStateFields(outcomeDiff, "outcome_diff");
   const outcome = cloneState(outcomeDiff as JsonObject);
-  const allowed = new Set(["world", "player", "inventory", "npcs", "compendium", "map", "quests"]);
+  const allowed = new Set(["world", "player", "inventory", "npcs", "compendium", "map", "quests", "history"]);
   const unknown = Object.keys(outcome).filter((key) => !allowed.has(key));
   if (unknown.length) {
     throw new AegisError("INVALID_DIFF", `outcome_diff 含有不允許的欄位：${unknown.join("、")}。`);
@@ -581,14 +637,59 @@ function mergeTimeOutcome(outcomeDiff: unknown, playerPatch: JsonObject, event: 
     throw new AegisError("INVALID_DIFF", "outcome_diff.player 必須是物件。");
   }
   const player = playerOutcome as JsonObject | undefined;
-  for (const key of ["survival", "date", "time"] as const) {
+  for (const key of ["survival", "clock", "date", "time", "season"] as const) {
     if (player?.[key] !== undefined) {
       throw new AegisError("INVALID_DIFF", `outcome_diff.player.${key} 由時間結算器管理，不得重複指定。`);
     }
   }
+  const independentEvents = extractIndependentTimeEvents(outcome.history);
+  delete outcome.history;
   outcome.player = { ...(player ?? {}), ...playerPatch };
-  outcome.history = { append: [event] };
+  outcome.history = { append: [event, ...independentEvents] };
   return outcome;
+}
+
+function extractIndependentTimeEvents(raw: JsonValue | undefined): JsonValue[] {
+  if (raw === undefined) return [];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new AegisError("INVALID_DIFF", "outcome_diff.history 必須使用 { append: [...] }。");
+  }
+  const history = raw as JsonObject;
+  const unknown = Object.keys(history).filter((key) => key !== "append");
+  if (unknown.length || !Array.isArray(history.append)) {
+    throw new AegisError("INVALID_DIFF", "outcome_diff.history 只允許 append 獨立事件。");
+  }
+  for (const [index, event] of history.append.entries()) {
+    if (!event || typeof event !== "object" || Array.isArray(event)) {
+      throw new AegisError("INVALID_DIFF", `outcome_diff.history.append[${index}] 必須是結構化事件。`);
+    }
+    const type = String((event as JsonObject).type ?? "");
+    if (type === "time_elapsed" || type === "travel") {
+      throw new AegisError("INVALID_DIFF", "outcome_diff.history 不得重複加入主要時間或旅行事件。");
+    }
+  }
+  return cloneState(history.append);
+}
+
+function normalizeElapsedMinutes(minutes: number | undefined, hours: number | undefined): number {
+  if (minutes !== undefined && hours !== undefined) {
+    throw new AegisError("INVALID_DIFF", "elapsed_minutes 與 elapsed_hours 不得同時提供。");
+  }
+  if (minutes === undefined && hours === undefined) {
+    throw new AegisError("INVALID_DIFF", "必須提供 elapsed_minutes；舊版可暫用 elapsed_hours。");
+  }
+  if (minutes !== undefined) {
+    if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 720 * 60) {
+      throw new AegisError("INVALID_DIFF", "elapsed_minutes 必須是 1～43200 的整數。");
+    }
+    return minutes;
+  }
+  if (typeof hours !== "number" || !Number.isFinite(hours) || hours <= 0 || hours > 720) {
+    throw new AegisError("INVALID_DIFF", "elapsed_hours 必須大於 0 且不得超過 720。");
+  }
+  const converted = Math.round((hours + Number.EPSILON) * 60);
+  if (converted <= 0) throw new AegisError("INVALID_DIFF", "elapsed_hours 換算後必須至少為 1 分鐘。");
+  return converted;
 }
 
 function resetChangedPaths(left: GameState, right: GameState): string[] {

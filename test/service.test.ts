@@ -87,11 +87,8 @@ describe("AegisService", () => {
         hp: 88,
         mp: 30,
         sp: 50,
-        date: "舊日期",
-        time: "舊時間",
-        season: "春",
         weather: "晴",
-        location: { region: "舊地區", location: "舊城鎮" },
+        location: { mapId: "map-1", region: "舊地區", location: "舊城鎮" },
         attributes: { strength: 8 },
         skills,
       },
@@ -279,7 +276,7 @@ describe("AegisService", () => {
     expect(traveled.game.revision).toBe(1);
     expect(traveled.changedPaths).toEqual(expect.arrayContaining([
       "player.location", "player.survival.hunger", "player.survival.hydration",
-      "player.survival.elapsedGameMinutes", "player.date", "player.time", "map", "npcs", "compendium",
+      "player.survival.elapsedGameMinutes", "player.clock.minuteOfDay", "player.time", "map", "npcs", "compendium",
     ]));
     expect(traveled.game.player.location).toMatchObject({ mapId: "place-creek" });
     expect(traveled.game.map).toHaveLength(1);

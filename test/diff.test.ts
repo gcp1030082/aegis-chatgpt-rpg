@@ -51,7 +51,11 @@ describe("applyStateDiff", () => {
       expect.objectContaining({ id: "basic-sword", name: "基礎劍術", category: "combat", categoryLabel: "戰鬥" }),
     ]);
     expect(result.game.player.equipment).toEqual({});
-    expect(result.game.history.recent).toEqual(["角色建立完成。"]) ;
+    expect(result.game.history.recent).toEqual([
+      expect.objectContaining({
+        eventId: expect.stringMatching(/^event-/), type: "general", summary: "角色建立完成。", revision: 1,
+      }),
+    ]);
     expect(result.changedPaths).toContain("inventory");
   });
 
@@ -117,9 +121,48 @@ describe("applyStateDiff", () => {
 
   it("rejects protected and unknown top-level fields", () => {
     const state = defaultGameState("main");
-    expect(() => applyStateDiff(state, { revision: 99 }, options)).toThrow(/不允許/);
+    expect(() => applyStateDiff(state, { revision: 99 }, options)).toThrow(/不允許|伺服器管理/);
     const dangerous = JSON.parse('{"player":{"__proto__":{"admin":true}}}');
     expect(() => applyStateDiff(state, dangerous, options)).toThrow(/禁止欄位/);
+  });
+
+  it("removes world collections by a bare stable ID or an identifying object", () => {
+    const state = defaultGameState("main");
+    state.map = [
+      { mapId: "map-keep", name: "保留地點", kind: "place", discovery: "known" },
+      { mapId: "map-remove", name: "移除地點", kind: "place", discovery: "known" },
+    ];
+    state.npcs = [
+      { npcId: "npc-remove", name: "移除人物", familiarity: "met", location: { status: "unknown" } },
+    ];
+    state.quests = [
+      { questId: "quest-remove", name: "移除任務" },
+      { questId: "quest-keep", name: "保留任務" },
+    ];
+    state.compendium = [
+      {
+        entryId: "entry-remove", name: "移除條目", category: "other", categoryLabel: "其他",
+        stage: "rumor", facts: [],
+      },
+    ];
+
+    const result = applyStateDiff(state, {
+      map: { remove: ["map-remove"] },
+      npcs: { remove: [{ npcId: "npc-remove" }] },
+      quests: { remove: ["quest-remove"] },
+      compendium: { remove: ["entry-remove"] },
+    }, options);
+
+    expect(result.game.map.map((item) => item.mapId)).toEqual(["map-keep"]);
+    expect(result.game.npcs).toEqual([]);
+    expect(result.game.quests.map((item) => item.questId)).toEqual(["quest-keep"]);
+    expect(result.game.compendium).toEqual([]);
+  });
+
+  it("rejects collection removals without a usable identifier", () => {
+    const state = defaultGameState("main");
+    expect(() => applyStateDiff(state, { map: { remove: [{}] } }, options)).toThrow(/穩定 ID 或名稱/);
+    expect(() => applyStateDiff(state, { npcs: { remove: [true] } }, options)).toThrow(/識別碼或物件/);
   });
 
   it("rejects direct equipment mutation and unique skills without authority", () => {

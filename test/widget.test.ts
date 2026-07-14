@@ -11,7 +11,7 @@ describe("AEGIS dashboard widget", () => {
     expect(html).toContain('data-tab="equipment"');
     expect(html).toContain('data-tab="skills"');
     expect(html).toContain("點擊物品可查看數量、效果、來源與完整資料");
-    expect(html).toContain('version: "0.5.2"');
+    expect(html).toContain('version: "0.6.0"');
     for (const category of ["all", "consumable", "equipment", "misc", "special"]) {
       expect(html).toContain(`data-inventory-category="${category}"`);
     }
@@ -31,6 +31,16 @@ describe("AEGIS dashboard widget", () => {
     expect(html).toContain('data-tab="people"');
     expect(html).toContain('data-tab="compendium"');
     expect(html).toContain("function renderMap");
+    expect(html).toContain("function renderMapGraph");
+    expect(html).toContain("function stableMapPosition");
+    expect(html).toContain("function installMapPanZoom");
+    expect(html).toContain('data-map-view="graph"');
+    expect(html).toContain('data-map-view="list"');
+    expect(html).toContain('id="map-recenter"');
+    expect(html).toContain('id="map-focus-current"');
+    expect(html).toContain("function localMapEntries");
+    expect(html).toContain("查看此處範圍");
+    expect(html).toContain('renderMapGraph($("map-graph"), localMapEntries(mapEntriesCache, mapFocusId), mapLocationCache)');
     expect(html).toContain("function renderPeople");
     expect(html).toContain("function renderCompendium");
     expect(html).toContain("尚未收錄圖鑑條目");
@@ -44,6 +54,21 @@ describe("AEGIS dashboard widget", () => {
     expect(html).not.toContain("`rev ${game.revision}`");
     expect(html).not.toContain('request("tools/call"');
     expect(html).not.toContain("innerHTML");
+  });
+
+  it("keeps map hierarchy, directed routes, discovery styles, and mobile controls separate", async () => {
+    const html = await readFile(resolve("public/aegis-widget.html"), "utf8");
+    expect(html).toContain("map-hierarchy-line");
+    expect(html).toContain("map-route-line");
+    expect(html).toContain("map-route-danger");
+    expect(html).toContain("map-node-flags");
+    expect(html).toContain("route-arrow");
+    expect(html).toContain('status = route.knowledgeStatus === "heard"');
+    expect(html).toContain("stableStringHash");
+    expect(html).toContain("slice(0, 40)");
+    expect(html).toContain("touch-action: none");
+    expect(html).toContain('id="map-zoom-in"');
+    expect(html).toContain('id="map-zoom-out"');
   });
 
   it("deduplicates the same turn, allows a new turn at the same revision, and rejects stale updates", async () => {

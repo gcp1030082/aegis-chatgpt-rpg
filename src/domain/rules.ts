@@ -85,6 +85,13 @@ export const CORE_RULES: RuntimeRule[] = [
     instruction: "只有實際耗時的行動推進時間與 tick；介面查詢與純說明不推進世界。",
   },
   {
+    id: "TIME_002",
+    category: "world",
+    priority: "Critical",
+    triggers: ["movement", "rest", "combat", "crafting"],
+    instruction: "世界日期、時間與季節只由伺服器 GameClock 推進；玩家位置只以 mapId 為權威。旅行的時間、生存、位置、路線與事件結果必須在同一原子交易提交。",
+  },
+  {
     id: "SURVIVAL_001",
     category: "state",
     priority: "Critical",

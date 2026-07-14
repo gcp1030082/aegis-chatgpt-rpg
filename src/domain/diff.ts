@@ -5,7 +5,17 @@ import type { ApplyDiffResult, GameState, JsonObject, JsonValue } from "./types.
 import { assertSafeJson, isObject, validateGameState } from "./validation.js";
 import { recordAutomaticSave } from "./commit.js";
 import { normalizeSkills } from "./skills.js";
-import { normalizeKnowledgeState } from "./knowledge.js";
+import {
+  assertKnowledgeProgression,
+  assertNpcMemoryGrowth,
+  finalizeKnowledgeMetadata,
+  normalizeKnowledgeState,
+  updateNpcLocationsAfterPlayerMove,
+} from "./knowledge.js";
+import { normalizeClockState } from "./clock.js";
+import { normalizeQuestState, validateQuestReferences } from "./quests.js";
+import { normalizeHistoryState } from "./history.js";
+import { assertNoPrivateStateFields, assertNoServerManagedFields } from "./metadata.js";
 
 const ALLOWED_TOP_LEVEL = new Set([
   "world",
@@ -23,6 +33,7 @@ interface ApplyDiffOptions {
   maxStateBytes: number;
   idempotencyKey: string;
   turnSummary?: string | undefined;
+  trustedServerFields?: boolean | undefined;
 }
 
 export function applyStateDiff(
@@ -38,6 +49,10 @@ export function applyStateDiff(
   const unknownKeys = Object.keys(rawDiff).filter((key) => !ALLOWED_TOP_LEVEL.has(key));
   if (unknownKeys.length > 0) {
     throw new AegisError("INVALID_DIFF", `State Diff 含有不允許的頂層欄位：${unknownKeys.join(", ")}`);
+  }
+  if (!options.trustedServerFields) {
+    assertNoServerManagedFields(rawDiff);
+    assertNoPrivateStateFields(rawDiff, "State Diff");
   }
 
   const next = cloneState(current);
@@ -72,9 +87,19 @@ export function applyStateDiff(
     applyHistoryPatch(next, rawDiff.history, changedPaths);
   }
 
+  const npcsBeforeMovementRule = JSON.stringify(next.npcs);
+  updateNpcLocationsAfterPlayerMove(current, next);
+  if (JSON.stringify(next.npcs) !== npcsBeforeMovementRule) changedPaths.add("npcs");
+  normalizeClockState(next, false);
+  normalizeQuestState(next, true);
   normalizeKnowledgeState(next, true);
+  assertNpcMemoryGrowth(current, next);
+  assertKnowledgeProgression(current, next);
+  validateQuestReferences(next, "INVALID_DIFF");
 
   ensureAcquisitionRecords(current, next, initializingPlayer, changedPaths);
+
+  pruneUnchangedPaths(current, next, changedPaths);
 
   if (changedPaths.size === 0) {
     throw new AegisError("NO_STATE_CHANGE", "提交內容沒有造成任何狀態變更。", {
@@ -84,6 +109,8 @@ export function applyStateDiff(
 
   next.revision = current.revision + 1;
   next.updatedAt = new Date().toISOString();
+  finalizeKnowledgeMetadata(current, next);
+  normalizeHistoryState(next, current, options.idempotencyKey, true);
   recordAutomaticSave(next, options.idempotencyKey, options.turnSummary, [...changedPaths]);
   trimHistory(next);
   validateGameState(next, options.maxStateBytes);
@@ -229,9 +256,21 @@ function applyCollectionPatch(
   }
   if (patch.remove !== undefined) {
     if (!Array.isArray(patch.remove)) throw invalidSection(`${path}.remove`, "陣列");
-    const removeKeys = new Set(patch.remove.map(entityKey).filter(Boolean));
+    const removals = patch.remove;
+    for (const [index, removal] of removals.entries()) {
+      if (
+        typeof removal !== "string" &&
+        typeof removal !== "number" &&
+        !isObject(removal)
+      ) {
+        throw invalidSection(`${path}.remove[${index}]`, "識別碼或物件");
+      }
+      if (!removalKey(removal)) {
+        throw new AegisError("INVALID_DIFF", `${path}.remove[${index}] 必須包含可識別的穩定 ID 或名稱。`);
+      }
+    }
     const before = result.length;
-    result = result.filter((item) => !removeKeys.has(entityKey(item)));
+    result = result.filter((item) => !removals.some((removal) => matchesRemoval(item, removal)));
     if (before !== result.length) changed.add(path);
   }
   return result;
@@ -277,7 +316,12 @@ function upsertObjects(
     const index = findEntityIndex(result, item);
     if (index >= 0) {
       const existing = result[index];
-      if (existing) mergeObject(existing, item, `${path}[${index}]`, changed);
+      if (existing) {
+        const before = cloneState(existing);
+        mergeNestedKnowledgeCollections(existing, item, path, changed);
+        mergeObject(existing, item, `${path}[${index}]`, changed);
+        if (!sameJson(before, existing)) changed.add(path);
+      }
     } else {
       result.push(item);
       changed.add(path);
@@ -298,6 +342,7 @@ function entityKey(value: JsonValue): string {
   if (value.mapId !== undefined && value.mapId !== "") return `map:${String(value.mapId)}`;
   if (value.npcId !== undefined && value.npcId !== "") return `npc:${String(value.npcId)}`;
   if (value.entryId !== undefined && value.entryId !== "") return `entry:${String(value.entryId)}`;
+  if (value.questId !== undefined && value.questId !== "") return `quest:${String(value.questId)}`;
   if (value.id !== undefined && value.id !== "") return `id:${String(value.id)}`;
   if (value.name !== undefined && value.name !== "") {
     const quality = value.quality === undefined ? "" : `:${String(value.quality)}`;
@@ -307,17 +352,113 @@ function entityKey(value: JsonValue): string {
   return "";
 }
 
+function removalKey(value: JsonValue): string {
+  if (typeof value === "string" || typeof value === "number") return String(value).trim();
+  return entityKey(value);
+}
+
+function matchesRemoval(item: JsonObject, removal: JsonValue): boolean {
+  if (isObject(removal)) return entityKey(item) === entityKey(removal);
+  const key = removalKey(removal);
+  if (!key) return false;
+  return ["instanceId", "mapId", "npcId", "entryId", "questId", "id", "name", "slot"]
+    .some((field) => item[field] !== undefined && String(item[field]) === key);
+}
+
 function mergeObject(target: JsonObject, patch: JsonObject, path: string, changed: Set<string>): void {
   for (const [key, value] of Object.entries(patch)) {
     const childPath = `${path}.${key}`;
     const existing = target[key];
-    if (isObject(existing) && isObject(value)) {
+    if (isObject(existing) && isObject(value) && !isAtomicObjectPath(childPath)) {
       mergeObject(existing, value, childPath, changed);
     } else if (JSON.stringify(existing) !== JSON.stringify(value)) {
       target[key] = cloneState(value);
       changed.add(childPath);
     }
   }
+}
+
+function isAtomicObjectPath(path: string): boolean {
+  return /^npcs\[\d+\]\.location$/u.test(path);
+}
+
+function mergeNestedKnowledgeCollections(
+  target: JsonObject,
+  patch: JsonObject,
+  path: string,
+  changed: Set<string>,
+): void {
+  const keys = path === "map"
+    ? ["routes", "facilities", "knownDangers"]
+    : path === "npcs"
+      ? ["knownInformation", "services", "memories"]
+      : path === "compendium"
+        ? ["facts"]
+        : [];
+  for (const key of keys) {
+    const incoming = patch[key];
+    if (!Array.isArray(incoming)) continue;
+    const current = Array.isArray(target[key]) ? target[key] as JsonValue[] : [];
+    const merged = upsertNestedObjects(current, incoming, `${path}.${key}`);
+    patch[key] = merged;
+    if (!sameJson(current, merged)) changed.add(path);
+  }
+}
+
+function upsertNestedObjects(current: JsonValue[], incoming: JsonValue[], path: string): JsonObject[] {
+  const result = objectsOnly(current, path);
+  for (const raw of incoming) {
+    if (!isObject(raw)) throw invalidSection(`${path}[]`, "物件");
+    const item = cloneState(raw);
+    const key = nestedEntityKey(item);
+    const index = key ? result.findIndex((candidate) => nestedEntityKey(candidate) === key) : -1;
+    if (index < 0) {
+      result.push(item);
+      continue;
+    }
+    const existing = result[index];
+    if (!existing) continue;
+    if (path.endsWith(".facts") && Array.isArray(item.sources)) {
+      const oldSources = Array.isArray(existing.sources) ? existing.sources : [];
+      item.sources = mergeUniqueJson(oldSources, item.sources);
+    }
+    const ignored = new Set<string>();
+    mergeObject(existing, item, path, ignored);
+  }
+  return result;
+}
+
+function nestedEntityKey(value: JsonObject): string {
+  for (const key of ["routeId", "facilityId", "dangerId", "infoId", "serviceId", "memoryId", "factId"] as const) {
+    if (value[key] !== undefined && value[key] !== "") return `${key}:${String(value[key])}`;
+  }
+  return "";
+}
+
+function mergeUniqueJson(left: JsonValue[], right: JsonValue[]): JsonValue[] {
+  const result = cloneState(left);
+  const seen = new Set(result.map((value) => JSON.stringify(value)));
+  for (const value of right) {
+    const encoded = JSON.stringify(value);
+    if (!seen.has(encoded)) {
+      result.push(cloneState(value));
+      seen.add(encoded);
+    }
+  }
+  return result;
+}
+
+function pruneUnchangedPaths(current: GameState, next: GameState, paths: Set<string>): void {
+  for (const path of [...paths]) {
+    if (sameJson(valueAtPath(current, path), valueAtPath(next, path))) paths.delete(path);
+  }
+}
+
+function valueAtPath(value: unknown, path: string): unknown {
+  return path.split(".").reduce<unknown>((current, key) => {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return undefined;
+    return (current as Record<string, unknown>)[key];
+  }, value);
 }
 
 function trimHistory(state: GameState): void {
