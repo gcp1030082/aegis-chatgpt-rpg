@@ -328,6 +328,8 @@ describe("AegisService", () => {
 
   it("persists turnId locks and atomically permits exactly one dashboard per turn", async () => {
     await service.createGame("main");
+    await expect(service.dashboard("main"))
+      .rejects.toMatchObject({ code: "TURN_NOT_PREPARED" });
     await expect(service.dashboard("main", "00000000-0000-4000-8000-000000000000"))
       .rejects.toMatchObject({ code: "TURN_NOT_PREPARED" });
 
@@ -343,7 +345,7 @@ describe("AegisService", () => {
       .rejects.toMatchObject({ code: "TURN_SUPERSEDED" });
 
     const concurrent = await Promise.allSettled([
-      service.dashboard("main", active.turnId),
+      service.dashboard("main"),
       service.dashboard("main", active.turnId),
     ]);
     const fulfilled = concurrent.filter((result) => result.status === "fulfilled");
@@ -364,11 +366,14 @@ describe("AegisService", () => {
       .rejects.toMatchObject({ code: "DASHBOARD_ALREADY_SHOWN" });
 
     const sameRevisionTurn = await restarted.prepareTurn("main", "再看一次窗外");
-    const sameRevisionDashboard = await restarted.dashboard("main", sameRevisionTurn.turnId);
+    const sameRevisionDashboard = await restarted.dashboard("main");
     expect(sameRevisionDashboard.game.revision).toBe(unchanged.revision);
+    expect(sameRevisionDashboard.turnId).toBe(sameRevisionTurn.turnId);
     expect(sameRevisionDashboard.dashboardKey).toBe(
       `main:${sameRevisionTurn.turnId}:${unchanged.revision}`,
     );
+    await expect(restarted.dashboard("main", sameRevisionTurn.turnId))
+      .rejects.toMatchObject({ code: "DASHBOARD_ALREADY_SHOWN" });
     await restartedStore.close();
   });
 });

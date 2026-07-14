@@ -496,9 +496,9 @@ export class AegisService {
     return { game, idempotentReplay: false };
   }
 
-  async dashboard(gameId: string, turnId: string) {
+  async dashboard(gameId: string, turnId?: string) {
     assertGameId(gameId);
-    const id = cleanTurnId(turnId);
+    const id = turnId === undefined ? undefined : cleanTurnId(turnId);
     const claimed = await this.store.claimDashboard(gameId, id);
     const game = migrateGameState(claimed.game);
     validateGameState(game, this.config.maxStateBytes);

@@ -21,8 +21,8 @@
 6. If State changed, the model calls `aegis_apply_state_diff` with revision `N` and a unique idempotency key.
 7. The server validates the complete next state and performs compare-and-swap.
 8. Only after success does the model narrate the mutation as completed.
-9. After every required write is complete, the model calls `aegis_show_dashboard` exactly once with the active `turnId`.
-10. The storage layer atomically claims that `turnId`; superseded turns and a second claim of the same turn are rejected even under concurrent requests or after a restart.
+9. After every required write is complete, the model calls `aegis_show_dashboard` exactly once with the active `turnId`. A client that still has the legacy `game_id`-only tool schema may omit it.
+10. The storage layer atomically claims either the explicit `turnId` or, for that legacy call shape, the current active turn. Explicit superseded turns and a second claim of the same active turn are rejected even under concurrent requests or after a restart.
 11. The widget deduplicates by `gameId + turnId + revision`, rejects older revisions, and changes tabs locally without tools or mutations. A later no-write turn may legitimately show the same revision with a new `turnId`.
 12. On `REVISION_CONFLICT`, the model starts again from step 2 and must not render the rejected intermediate state or reuse its old `turnId`.
 

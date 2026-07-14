@@ -35,7 +35,7 @@ const resultOutputSchema = { result: z.record(z.unknown()) };
 
 export function createAegisMcpServer(service: AegisService, widgetHtml: string): McpServer {
   const server = new McpServer(
-    { name: "aegis-rpg", version: "0.5.1" },
+    { name: "aegis-rpg", version: "0.5.2" },
     {
       instructions:
         "AEGIS State 是單一流動世界的唯一權威。每個玩家回合先靜默呼叫 aegis_prepare_turn，再依權威狀態判定；aegis_prepare_turn 與 aegis_get_game_state 都不得建立玩家可見面板。prepare_turn 會簽發伺服器端 turnId，但不改變遊戲 State 或 revision。若持久狀態改變，必須在敘述成既成事實前成功寫入；沒有真實變化時不得為了產生 revision 虛構修改。時間流逝一律呼叫 aegis_advance_time；旅行或長事件若同時改變位置、地圖、人物、圖鑑或任務，將這些 outcome_diff 與時間和生存結算放在同一原子交易。食用或飲用一律呼叫 aegis_use_item；事件造成飽食或補水變化使用 aegis_apply_survival_event；裝備與卸除只使用 aegis_equip_item / aegis_unequip_item；玩家重設只使用 aegis_reset_player。寫入衝突時重新 prepare，並只使用新回合的 turnId。新地點、新 NPC 或新知識必須先成功寫入，才能在敘述與面板中視為已發現。map 只保存玩家已知或聽聞地點，具有唯一 mapId；npcs 只保存玩家合理知道的資料，具有唯一 npcId，禁止秘密與逐字稿；compendium 只保存實際發現知識，具有唯一 entryId、漸進階段、來源與可信度，不保存人物個體或具體地點。不得自行虛構背包、金錢、能力、NPC 狀態、精確路線或世界全知事實。物品 category 必須且只能是 consumable、equipment、misc、special；全部只是介面檢視。每件實體物品必須有唯一 instanceId；已裝備實例不得留在 inventory。物品描述、結構化 effects 或 modifiers、acquisition 與限制必須分離；初始物品 acquisition.type 使用 initial_item。技能必須有單一 category、繁中 categoryLabel、分離的 description、effects、acquisition 與可選 tags；初始技能使用 initial_skill；unique 類別必須有 uniqueScope 與 uniqueHolderId 權威依據。未知欄位保持空缺，不得猜測或把規格示例當固定數值。AEGIS 僅自動保存，不向一般玩家提供建立、列出或讀取舊存檔。玩家可見內容全部使用繁體中文，不顯示內部 Diff、Revision、驗證或 Transaction。完成本回合所有必要寫入後，以 prepare_turn 回傳的 turnId 恰好呼叫一次 aegis_show_dashboard；伺服器會原子拒絕過期 turnId 與同一回合的第二次顯示。不得顯示中間狀態。頁籤切換完全由前端處理，不呼叫工具、不推進時間、不產生 revision。",
@@ -158,7 +158,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       return {
         turn,
         nextStep:
-          `Resolve only this player action. Use specialized write tools for time, item use, survival, equipment, or player reset, and aegis_apply_state_diff for other changes. Narrate completion only after the required write succeeds. After every write is finished, call aegis_show_dashboard exactly once with turn_id=${turn.turnId}; never show an intermediate revision or reuse an older turnId. Do not offer manual save or load.`,
+          `Resolve only this player action. Use specialized write tools for time, item use, survival, equipment, or player reset, and aegis_apply_state_diff for other changes. Narrate completion only after the required write succeeds. After every write is finished, call aegis_show_dashboard exactly once with turn_id=${turn.turnId}; never show an intermediate revision or reuse an older turnId. If the client tool schema does not expose turn_id, call aegis_show_dashboard exactly once with game_id only so the server can atomically claim the active turn. Do not offer manual save or load.`,
       };
     }),
   );
@@ -396,8 +396,8 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_show_dashboard",
     {
       title: "顯示 AEGIS 儀表板",
-      description: "在本回合所有狀態變更完成後，以 prepare_turn 簽發的 turnId 唯一一次顯示角色、背包、裝備、技能、任務、地圖、人物、圖鑑、生存與自動保存狀態。過期 turnId 或同一回合的第二次呼叫會由伺服器拒絕。",
-      inputSchema: { game_id: gameIdSchema, turn_id: turnIdSchema },
+      description: "在本回合所有狀態變更完成後唯一一次顯示綜合面板。應傳入 prepare_turn 簽發的 turnId；若舊版客戶端 schema 尚未提供 turn_id，伺服器會原子認領目前有效回合。過期 turnId 或同一回合的第二次呼叫仍會被拒絕。",
+      inputSchema: { game_id: gameIdSchema, turn_id: turnIdSchema.optional() },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, false, false),
       _meta: {

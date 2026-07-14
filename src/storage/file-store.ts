@@ -87,7 +87,7 @@ export class FileGameStore implements GameStore {
     });
   }
 
-  async claimDashboard(gameId: string, turnId: string): Promise<DashboardClaim> {
+  async claimDashboard(gameId: string, turnId?: string): Promise<DashboardClaim> {
     return this.mutex.run(gameId, async () => {
       const game = await this.getGame(gameId);
       if (!game) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${gameId}。`);
@@ -168,11 +168,11 @@ export class FileGameStore implements GameStore {
   }
 }
 
-function assertDashboardTurn(turn: TurnRecord | null, turnId: string): asserts turn is TurnRecord {
+function assertDashboardTurn(turn: TurnRecord | null, turnId?: string): asserts turn is TurnRecord {
   if (!turn) {
     throw new AegisError("TURN_NOT_PREPARED", "尚未準備可顯示面板的回合，請先呼叫 aegis_prepare_turn。");
   }
-  if (turn.turnId !== turnId) {
+  if (turnId !== undefined && turn.turnId !== turnId) {
     throw new AegisError("TURN_SUPERSEDED", "此回合已被較新的回合取代，請使用最新的 turn_id。");
   }
   if (turn.dashboardShownAt !== null) {

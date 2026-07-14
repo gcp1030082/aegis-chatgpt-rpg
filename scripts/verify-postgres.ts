@@ -60,10 +60,16 @@ try {
   );
 
   const noWriteTurn = await restarted.prepareTurn(gameId, "只查看狀態，不修改資料");
-  const dashboard = await restarted.dashboard(gameId, noWriteTurn.turnId);
+  const dashboard = await restarted.dashboard(gameId);
   assert.equal(dashboard.game.revision, 1);
+  assert.equal(dashboard.turnId, noWriteTurn.turnId);
   assert.equal(dashboard.dashboardKey, `${gameId}:${noWriteTurn.turnId}:1`);
-  console.log("PostgreSQL 端到端驗收通過：狀態、快照、重啟持久性與單回合面板鎖均正常。");
+  await assert.rejects(
+    restarted.dashboard(gameId, noWriteTurn.turnId),
+    (error: unknown) => Boolean(error && typeof error === "object" && "code" in error &&
+      error.code === "DASHBOARD_ALREADY_SHOWN"),
+  );
+  console.log("PostgreSQL 端到端驗收通過：狀態、快照、重啟持久性、舊 schema 相容與單回合面板鎖均正常。");
 } finally {
   await store?.close().catch(() => undefined);
   await restartedStore?.close().catch(() => undefined);

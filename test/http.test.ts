@@ -53,7 +53,7 @@ describe("production HTTP surface", () => {
   it("serves health and initializes MCP on the secret path", async () => {
     const health = await fetch(`${origin}/healthz`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ ok: true, version: "0.5.1" });
+    expect(await health.json()).toMatchObject({ ok: true, version: "0.5.2" });
 
     const healthWithTrailingSlash = await fetch(`${origin}/healthz/`);
     expect(healthWithTrailingSlash.status).toBe(200);
@@ -116,7 +116,12 @@ describe("production HTTP surface", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }),
     });
     const toolsPayload = (await toolsList.json()) as {
-      result?: { tools?: Array<{ name?: string; description?: string; _meta?: Record<string, unknown> }> };
+      result?: { tools?: Array<{
+        name?: string;
+        description?: string;
+        inputSchema?: { properties?: Record<string, unknown>; required?: string[] };
+        _meta?: Record<string, unknown>;
+      }> };
     };
     const names = toolsPayload.result?.tools?.map((tool) => tool.name) ?? [];
     expect(names).toHaveLength(12);
@@ -135,6 +140,9 @@ describe("production HTTP surface", () => {
     for (const tool of toolsPayload.result?.tools ?? []) {
       if (tool.name === "aegis_show_dashboard") {
         expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v6.html");
+        expect(tool.inputSchema?.properties).toHaveProperty("turn_id");
+        expect(tool.inputSchema?.required).toContain("game_id");
+        expect(tool.inputSchema?.required).not.toContain("turn_id");
       } else {
         expect(tool._meta?.["openai/outputTemplate"]).toBeUndefined();
       }
@@ -217,7 +225,7 @@ describe("production HTTP surface", () => {
 
     const turnId = preparedResult.turn?.turnId;
     if (!turnId) throw new Error("prepare_turn 未回傳 turnId");
-    const shown = await callTool(13, "aegis_show_dashboard", { game_id: "ui-flow", turn_id: turnId });
+    const shown = await callTool(13, "aegis_show_dashboard", { game_id: "ui-flow" });
     const shownResult = shown.result?.structuredContent?.result as {
       dashboard?: { dashboardKey?: string; turnId?: string; game?: { revision?: number; player?: { sp?: number } } };
     };

@@ -125,7 +125,7 @@ export class PostgresGameStore implements GameStore {
     });
   }
 
-  async claimDashboard(gameId: string, turnId: string): Promise<DashboardClaim> {
+  async claimDashboard(gameId: string, turnId?: string): Promise<DashboardClaim> {
     return this.transaction(async (client) => {
       const gameResult = await client.query<{ state: GameState }>(
         "SELECT state FROM aegis_games WHERE game_id = $1 FOR UPDATE",
@@ -145,7 +145,7 @@ export class PostgresGameStore implements GameStore {
         throw new AegisError("TURN_NOT_PREPARED", "尚未準備可顯示面板的回合，請先呼叫 aegis_prepare_turn。");
       }
       const turn = toTurnRecord(row);
-      if (turn.turnId !== turnId) {
+      if (turnId !== undefined && turn.turnId !== turnId) {
         throw new AegisError("TURN_SUPERSEDED", "此回合已被較新的回合取代，請使用最新的 turn_id。");
       }
       if (turn.dashboardShownAt !== null) {
@@ -154,6 +154,7 @@ export class PostgresGameStore implements GameStore {
         });
       }
 
+      const activeTurnId = turn.turnId;
       const shownAt = new Date().toISOString();
       const claimedResult = await client.query<TurnRow>(
         `UPDATE aegis_turns
@@ -161,7 +162,7 @@ export class PostgresGameStore implements GameStore {
          WHERE game_id = $1 AND turn_id = $2 AND dashboard_shown_at IS NULL
          RETURNING game_id, turn_id, prepared_revision, prepared_at,
                    dashboard_revision, dashboard_shown_at`,
-        [gameId, turnId, game.revision, shownAt],
+        [gameId, activeTurnId, game.revision, shownAt],
       );
       const claimed = claimedResult.rows[0];
       if (!claimed) {
