@@ -24,11 +24,11 @@ import {
   type SurvivalActivity,
   type SurvivalEnvironment,
 } from "./domain/survival.js";
-import type { GameState, JsonObject, JsonValue, SaveRecord } from "./domain/types.js";
+import type { GameState, JsonObject, JsonValue, PrivateWorldState, SaveRecord } from "./domain/types.js";
 import { assertGameId, validateGameState } from "./domain/validation.js";
 import type { GameStore } from "./storage/store.js";
 import { recordAutomaticSave } from "./domain/commit.js";
-import { advanceGameClock } from "./domain/clock.js";
+import { advanceGameClock, resetGameClock } from "./domain/clock.js";
 import { newHistoryEvent } from "./domain/history.js";
 import { assertNoPrivateStateFields, assertNoServerManagedFields } from "./domain/metadata.js";
 import { toDashboardView } from "./domain/dashboard.js";
@@ -158,8 +158,11 @@ export class AegisService {
       });
     }
 
+    const currentPrivateWorld = await this.store.getPrivateWorld(gameId)
+      ?? defaultPrivateWorldState(gameId, current.updatedAt);
     const next = cloneState(current);
     next.player = defaultPlayerState();
+    resetGameClock(next);
     next.inventory = [];
     next.quests = [];
     next.history = { recent: [], major: [], summary: [] };
@@ -167,6 +170,9 @@ export class AegisService {
     next.map = [];
     next.compendium = [];
     const changedPaths = resetChangedPaths(current, next);
+    if (hasPrivateWorldProgress(currentPrivateWorld) && !changedPaths.includes("npcs")) {
+      changedPaths.push("npcs");
+    }
     if (changedPaths.length === 0) {
       throw new AegisError("NO_STATE_CHANGE", "玩家資料已是未初始化狀態，沒有需要重設的內容。", {
         changedPaths: [],
@@ -177,11 +183,16 @@ export class AegisService {
     next.engine.transactionLog = [];
     recordAutomaticSave(next, key, "Player reset", changedPaths);
     validateGameState(next, this.config.maxStateBytes);
-    const game = await this.store.compareAndSwap(gameId, expectedRevision, next);
+    const reset = await this.store.resetProgress({
+      expectedRevision,
+      idempotencyKey: key,
+      game: next,
+      privateWorld: defaultPrivateWorldState(gameId, next.updatedAt),
+    });
     return {
-      game,
-      changedPaths,
-      idempotentReplay: false,
+      game: reset.game,
+      changedPaths: reset.idempotentReplay ? [] : changedPaths,
+      idempotentReplay: reset.idempotentReplay,
     };
   }
 
@@ -627,7 +638,10 @@ function mergeTimeOutcome(outcomeDiff: unknown, playerPatch: JsonObject, event: 
   assertNoServerManagedFields(outcomeDiff, "outcome_diff");
   assertNoPrivateStateFields(outcomeDiff, "outcome_diff");
   const outcome = cloneState(outcomeDiff as JsonObject);
-  const allowed = new Set(["world", "player", "inventory", "npcs", "compendium", "map", "quests", "history"]);
+  if (outcome.world !== undefined) {
+    throw new AegisError("INVALID_DIFF", "outcome_diff 不得修改固定世界艾爾維亞的 world 本體。");
+  }
+  const allowed = new Set(["player", "inventory", "npcs", "compendium", "map", "quests", "history"]);
   const unknown = Object.keys(outcome).filter((key) => !allowed.has(key));
   if (unknown.length) {
     throw new AegisError("INVALID_DIFF", `outcome_diff 含有不允許的欄位：${unknown.join("、")}。`);
@@ -761,6 +775,13 @@ function assertNonnegativeCost(value: number, label: string): void {
 function hasIdempotencyKey(state: GameState, key: string): boolean {
   const keys = state.engine.idempotencyKeys;
   return Array.isArray(keys) && keys.includes(key);
+}
+
+function hasPrivateWorldProgress(state: PrivateWorldState): boolean {
+  const value = state as unknown as Record<string, unknown>;
+  const npcs = value.npcs;
+  if (npcs && typeof npcs === "object" && !Array.isArray(npcs) && Object.keys(npcs).length > 0) return true;
+  return Object.keys(value).some((key) => !["gameId", "schemaVersion", "updatedAt", "npcs"].includes(key));
 }
 
 function appendRestoreTransaction(state: GameState, key: string, save: SaveRecord): void {

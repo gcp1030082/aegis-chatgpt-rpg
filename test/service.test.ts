@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AegisService } from "../src/service.js";
 import { FileGameStore } from "../src/storage/file-store.js";
+import { defaultGameState, defaultPrivateWorldState, MIGRATION_KEY } from "../src/domain/default-state.js";
+import type { JsonObject } from "../src/domain/types.js";
 
 describe("AegisService", () => {
   let directory: string;
@@ -61,7 +63,7 @@ describe("AegisService", () => {
     ).rejects.toMatchObject({ code: "REVISION_CONFLICT" });
   });
 
-  it("atomically resets player-owned data while preserving world and developer recovery snapshots", async () => {
+  it("atomically resets all player progress and private NPC state while preserving Aelvia and recovery snapshots", async () => {
     await service.createGame("main", "測試世界");
     const skills = Array.from({ length: 6 }, (_, index) => ({ id: `skill-${index}`, name: `舊技能${index}` }));
     const inventory = Array.from({ length: 6 }, (_, index) => ({
@@ -77,7 +79,6 @@ describe("AegisService", () => {
       modifiers: [{ stat: "defense", operation: "add", value: index + 1 }],
     }));
     const populated = await service.applyDiff("main", 0, "populate-reset-fixture", {
-      world: { name: "保留世界", rules: ["世界規則"] },
       player: {
         initialized: true,
         name: "舊角色洛恩",
@@ -117,6 +118,12 @@ describe("AegisService", () => {
     const ready = await service.getGame("main");
     expect(ready.inventory).toHaveLength(6);
     expect(Object.keys(ready.player.equipment ?? {})).toHaveLength(8);
+    const privateWorld = defaultPrivateWorldState("main", ready.updatedAt);
+    privateWorld.npcs["npc-private-old"] = {
+      trueIdentity: "舊世界私密身份",
+      privateState: { objective: "舊角色專屬目標" },
+    };
+    await store.putPrivateWorld(privateWorld);
     await service.createSave("main", "重設前快照", "save-before-reset");
 
     const reset = await service.resetPlayer("main", revision, "reset-player-1");
@@ -135,7 +142,7 @@ describe("AegisService", () => {
     expect(reset.game.inventory).toEqual([]);
     expect(reset.game.quests).toEqual([]);
     expect(reset.game.history).toEqual({ recent: [], major: [], summary: [] });
-    expect(reset.game.world).toMatchObject({ name: "保留世界", rules: ["世界規則"] });
+    expect(reset.game.world).toMatchObject({ worldId: "aelvia", name: "艾爾維亞" });
     expect(reset.game.npcs).toEqual([]);
     expect(reset.game.map).toEqual([]);
     expect(reset.game.compendium).toEqual([]);
@@ -143,6 +150,7 @@ describe("AegisService", () => {
     expect(JSON.stringify(reset.game)).not.toContain("舊技能");
     expect(JSON.stringify(reset.game)).not.toContain("舊任務");
     expect(JSON.stringify(reset.game)).not.toContain("舊摘要");
+    expect((await service.getPrivateWorldInternal("main")).npcs).toEqual({});
     expect(await service.listSaves("main")).toHaveLength(1);
     expect(reset.game.engine.autoSave).toMatchObject({ status: "saved", revision: revision + 1 });
     expect(reset.game.engine.transactionLog).toHaveLength(1);
@@ -305,15 +313,51 @@ describe("AegisService", () => {
     expect(slept.survival).toMatchObject({ hunger: 89.6, hydration: 84.4, elapsedGameMinutes: 480 });
   });
 
-  it("reads survival decay rates from authoritative world balance instead of item examples", async () => {
+  it("reads survival decay rates from the immutable Aelvia world balance", async () => {
     await service.createGame("main");
-    const configured = await service.applyDiff("main", 0, "world-survival-balance", {
-      world: { survivalBalance: { hungerPerGameHour: 1, hydrationPerGameHour: 1.5 } },
-    });
     const elapsed = await service.advanceTime(
-      "main", configured.game.revision, "balanced-hour", 2, "normal", "temperate", "日常活動兩小時",
+      "main", 0, "balanced-hour", 2, "normal", "temperate", "日常活動兩小時",
     );
-    expect(elapsed.survival).toMatchObject({ hunger: 98, hydration: 97, elapsedGameMinutes: 120 });
+    expect(elapsed.game.world.survivalBalance).toEqual({ hungerPerGameHour: 2, hydrationPerGameHour: 3 });
+    expect(elapsed.survival).toMatchObject({ hunger: 96, hydration: 94, elapsedGameMinutes: 120 });
+  });
+
+  it("migrates an old custom calendar before reset so legacy date caches cannot block progress clearing", async () => {
+    const legacy = defaultGameState("legacy-reset");
+    legacy.schemaVersion = "0.6.0";
+    legacy.version = "6.7.7-mcp.6.0";
+    delete (legacy.engine.migrations as JsonObject)[MIGRATION_KEY];
+    legacy.world = {
+      name: "舊世界",
+      calendar: {
+        calendarId: "old-calendar",
+        eraName: "舊曆",
+        hoursPerDay: 10,
+        minutesPerHour: 100,
+        months: [
+          { monthId: "old-first", name: "舊首月", days: 2 },
+          { monthId: "old-second", name: "舊次月", days: 3 },
+        ],
+      },
+      survivalBalance: { hungerPerGameHour: 1, hydrationPerGameHour: 1 },
+    };
+    legacy.player.initialized = true;
+    legacy.player.name = "待重設角色";
+    legacy.player.clock = { year: 12, monthId: "old-second", day: 2, minuteOfDay: 350 };
+    legacy.player.date = "舊曆12年・舊次月2日";
+    legacy.player.time = "第 3 時 50 分";
+    legacy.engine.autoSave = { status: "saved", revision: 0, savedAt: legacy.updatedAt };
+    await store.createGame(legacy);
+
+    const reset = await service.resetPlayer("legacy-reset", 0, "legacy-calendar-reset");
+    expect(reset.game.world).toMatchObject({ worldId: "aelvia", name: "艾爾維亞" });
+    expect(reset.game.player).toMatchObject({
+      initialized: false,
+      clock: { year: 742, monthId: "sprout", day: 1, minuteOfDay: 480 },
+      date: "群星曆742年・芽月1日",
+      time: "上午 08:00",
+      season: "春季",
+    });
   });
 
   it("does not advance revision when an already empty player is reset", async () => {
@@ -321,6 +365,38 @@ describe("AegisService", () => {
     await expect(service.resetPlayer("main", 0, "empty-reset"))
       .rejects.toMatchObject({ code: "NO_STATE_CHANGE", details: { changedPaths: [] } });
     expect((await service.getGame("main")).revision).toBe(0);
+  });
+
+  it("serializes concurrent reset retries and clears private-only NPC progress", async () => {
+    await service.createGame("main");
+    const initialized = await service.applyDiff("main", 0, "reset-race-setup", {
+      player: { initialized: true, name: "即將重設" },
+    });
+    const privateWorld = defaultPrivateWorldState("main", initialized.game.updatedAt);
+    privateWorld.npcs["npc-private-only"] = { privateState: { objective: "不得殘留" } };
+    await store.putPrivateWorld(privateWorld);
+
+    const results = await Promise.all([
+      service.resetPlayer("main", initialized.game.revision, "same-reset-key"),
+      service.resetPlayer("main", initialized.game.revision, "same-reset-key"),
+    ]);
+    expect(results.map((result) => result.idempotentReplay).sort()).toEqual([false, true]);
+    expect(results.every((result) => result.game.revision === 2)).toBe(true);
+    expect((await service.getPrivateWorldInternal("main")).npcs).toEqual({});
+    expect((await service.getGame("main")).world).toMatchObject({ worldId: "aelvia", name: "艾爾維亞" });
+  });
+
+  it("clears legacy private-world remnants even when visible progress is already empty", async () => {
+    await service.createGame("main");
+    const privateWorld = defaultPrivateWorldState("main");
+    (privateWorld as unknown as JsonObject).legacyWorldState = { sentinel: "OLD_PRIVATE_WORLD" };
+    await store.putPrivateWorld(privateWorld);
+
+    const reset = await service.resetPlayer("main", 0, "private-remnant-reset");
+    expect(reset.game.revision).toBe(1);
+    expect(reset.changedPaths).toContain("npcs");
+    expect(JSON.stringify(await service.getPrivateWorldInternal("main"))).not.toContain("OLD_PRIVATE_WORLD");
+    expect((await service.getGame("main")).world).toMatchObject({ worldId: "aelvia", name: "艾爾維亞" });
   });
 
   it("persists turnId locks and atomically permits exactly one dashboard per turn", async () => {

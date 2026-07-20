@@ -13,13 +13,13 @@ import type { GameState, JsonObject } from "../src/domain/types.js";
 import { AegisService } from "../src/service.js";
 import { FileGameStore } from "../src/storage/file-store.js";
 
-describe("v0.6 safe migration", () => {
+describe("v0.7 fixed-Aelvia migration", () => {
   let directory: string;
   let store: FileGameStore;
   let service: AegisService;
 
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), "aegis-migration-v6-"));
+    directory = await mkdtemp(join(tmpdir(), "aegis-migration-v7-"));
     store = new FileGameStore(directory);
     await store.initialize();
     service = new AegisService(store, {
@@ -33,14 +33,21 @@ describe("v0.6 safe migration", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  it("backs up and migrates the curated main hierarchy, structured routes, IDs, clock, and private NPC state once", async () => {
+  it("backs up and migrates the fixed Aelvia world, curated knowledge, clock, and private NPC state once", async () => {
     const legacy = legacyMainState();
     await store.createGame(legacy);
 
     const migrated = await service.getGame("main");
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
     expect((migrated.engine.migrations as JsonObject)[MIGRATION_KEY]).toMatchObject({
-      sourceVersion: "6.7.7-mcp.5.2", targetVersion: "0.6.0",
+      sourceVersion: "6.7.7-mcp.5.2", targetVersion: "0.7.0",
+    });
+    expect(migrated.world).toMatchObject({
+      worldId: "aelvia",
+      worldVersion: "aelvia-v1",
+      name: "艾爾維亞",
+      genre: "劍與魔法的異世界",
+      calendar: { calendarId: "aelvia-stars-calendar" },
     });
     expect(migrated.player).toMatchObject({
       location: {
@@ -89,6 +96,7 @@ describe("v0.6 safe migration", () => {
     expect(backups).toHaveLength(1);
     expect(backups[0]).toMatchObject({ sourceVersion: "6.7.7-mcp.5.2", sourceRevision: 17 });
     expect(backups[0]?.state.schemaVersion).toBe("6.7.7-mcp.5.2");
+    expect(backups[0]?.state.world.name).toBe("洛薩舊世界");
     const privateWorld = await service.getPrivateWorldInternal("main");
     expect(privateWorld.npcs["legacy-npc-bran"]).toMatchObject({
       trueIdentity: "流亡貴族", trueLocation: "灰葉藥鋪後室", privateState: { objective: "隱瞞身份" },
@@ -114,7 +122,7 @@ describe("v0.6 safe migration", () => {
     expect(left.history).toEqual(right.history);
   });
 
-  it("commits a missing migration marker even when schemaVersion already says 0.6.0", async () => {
+  it("commits a missing migration marker even when schemaVersion already matches", async () => {
     const partial = defaultGameState("missing-marker");
     delete (partial.engine.migrations as JsonObject)[MIGRATION_KEY];
     await store.createGame(partial);
@@ -157,7 +165,7 @@ describe("v0.6 safe migration", () => {
       quests: [],
       history: { recent: [], major: [], summary: [] },
       player: { initialized: false, clock: { monthId: "sprout" } },
-      world: { calendar: { calendarId: "eldra-stars-calendar" } },
+      world: { worldId: "aelvia", name: "艾爾維亞", calendar: { calendarId: "aelvia-stars-calendar" } },
     });
     expect(await store.listMigrationBackups("sparse-legacy")).toHaveLength(1);
   });
@@ -202,6 +210,8 @@ function legacyMainState(): GameState {
   markLegacy(state);
   state.revision = 17;
   state.engine.autoSave = { status: "saved", revision: 17, savedAt: state.updatedAt };
+  state.world.name = "洛薩舊世界";
+  state.world.genre = "舊版可改寫世界";
   delete state.world.calendar;
   delete state.player.clock;
   state.player.date = "群星曆744年・霜月17日";

@@ -8,6 +8,13 @@ export interface RuntimeRule {
 
 export const CORE_RULES: RuntimeRule[] = [
   {
+    id: "WORLD_000",
+    category: "core",
+    priority: "Critical",
+    triggers: ["core", "world", "persistence"],
+    instruction: "世界本體永遠是伺服器定義的艾爾維亞。玩家與模型不得修改 world；新發現與事件只能形成地圖、人物、任務、圖鑑或歷史進度。",
+  },
+  {
     id: "WORLD_001",
     category: "core",
     priority: "Critical",

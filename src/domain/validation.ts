@@ -8,6 +8,7 @@ import { validateHistoryState } from "./history.js";
 import { validateQuestReferences, validateQuestState } from "./quests.js";
 import { SCHEMA_VERSION } from "./default-state.js";
 import { assertNoPrivateStateFields } from "./metadata.js";
+import { validateCanonicalWorld } from "./world.js";
 
 const GAME_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
@@ -92,6 +93,7 @@ export function validateGameState(state: GameState, maxBytes: number): void {
   for (const [key, value] of [["world", state.world], ["player", state.player], ["history", state.history], ["engine", state.engine]] as const) {
     if (!isObject(value)) throw new AegisError("INVALID_STATE", `${key} 必須是物件。`);
   }
+  validateCanonicalWorld(state.world);
   if (state.world.survivalBalance !== undefined) {
     if (!isObject(state.world.survivalBalance)) {
       throw new AegisError("INVALID_STATE", "world.survivalBalance 必須是物件。");

@@ -53,7 +53,6 @@ describe("bounded dashboard DTO", () => {
       npcs,
       compendium,
       history: { append: history },
-      world: { notes: long },
     }, options).game;
 
     const dashboard = toDashboardView(game);

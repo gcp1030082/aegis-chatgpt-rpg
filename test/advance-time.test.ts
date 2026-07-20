@@ -5,13 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AegisService } from "../src/service.js";
 import { FileGameStore } from "../src/storage/file-store.js";
 
-describe("aegis_advance_time v0.6 atomic transaction", () => {
+describe("aegis_advance_time v0.7 atomic transaction", () => {
   let directory: string;
   let store: FileGameStore;
   let service: AegisService;
 
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), "aegis-time-v6-"));
+    directory = await mkdtemp(join(tmpdir(), "aegis-time-v7-"));
     store = new FileGameStore(directory);
     await store.initialize();
     service = new AegisService(store, {
@@ -170,6 +170,10 @@ describe("aegis_advance_time v0.6 atomic transaction", () => {
       "main", setup.game.revision, "private-outcome", undefined, "normal", "temperate", "私密欄位測試",
       0, 0, undefined, undefined, { world: { privateState: { leaked: true } } }, 30,
     )).rejects.toMatchObject({ code: "INVALID_DIFF" });
+    await expect(service.advanceTime(
+      "main", setup.game.revision, "world-outcome", undefined, "normal", "temperate", "固定世界測試",
+      0, 0, undefined, undefined, { world: { name: "其他世界" } }, 30,
+    )).rejects.toThrow(/固定世界艾爾維亞/);
 
     expect(await service.getGame("main")).toEqual(before);
   });

@@ -4,6 +4,8 @@ import type {
   MigrationBackup,
   MigrationCommit,
   PrivateWorldState,
+  ProgressResetCommit,
+  ProgressResetResult,
   SaveRecord,
   SaveSummary,
   TurnRecord,
@@ -14,6 +16,7 @@ export interface GameStore {
   createGame(state: GameState): Promise<GameState>;
   getGame(gameId: string): Promise<GameState | null>;
   compareAndSwap(gameId: string, expectedRevision: number, next: GameState): Promise<GameState>;
+  resetProgress(reset: ProgressResetCommit): Promise<ProgressResetResult>;
   createMigrationBackup(backup: MigrationBackup): Promise<MigrationBackup>;
   commitMigration(migration: MigrationCommit): Promise<GameState>;
   getPrivateWorld(gameId: string): Promise<PrivateWorldState | null>;

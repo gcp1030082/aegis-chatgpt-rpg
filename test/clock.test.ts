@@ -69,7 +69,7 @@ describe("authoritative world calendar and GameClock", () => {
     expect(migrated.player).toMatchObject({ date: "群星曆745年・霜月17日", time: "下午 03:25", season: "秋季" });
   });
 
-  it("uses a valid first-month fallback for a legacy custom calendar without a clock", () => {
+  it("replaces a legacy custom calendar with Aelvia and resets to a valid Aelvia clock", () => {
     const legacy = defaultGameState("custom-legacy-clock");
     markLegacy(legacy);
     legacy.world.calendar = {
@@ -83,8 +83,9 @@ describe("authoritative world calendar and GameClock", () => {
     legacy.player.date = "";
     legacy.player.time = "";
     const migrated = migrateGameState(legacy);
-    expect(clockSnapshot(migrated)).toEqual({ year: 742, monthId: "first", day: 1, minuteOfDay: 800 });
-    expect(migrated.player).toMatchObject({ date: "十時曆742年・首月1日", time: "第 8 時 00 分" });
+    expect(clockSnapshot(migrated)).toEqual({ year: 742, monthId: "sprout", day: 1, minuteOfDay: 480 });
+    expect(migrated.world).toMatchObject({ worldId: "aelvia", name: "艾爾維亞" });
+    expect(migrated.player).toMatchObject({ date: "群星曆742年・芽月1日", time: "上午 08:00" });
   });
 
   it("rejects direct writes to clock and derived date caches", () => {
