@@ -4,14 +4,15 @@ import { migrateEquipmentState } from "./equipment.js";
 import { survivalView } from "./survival.js";
 import { normalizeSkills } from "./skills.js";
 import { normalizeKnowledgeState, playerKnowledgeView, finalizeKnowledgeMetadata } from "./knowledge.js";
-import { DEFAULT_CALENDAR, DEFAULT_CLOCK, normalizeClockState, snapshotObject } from "./clock.js";
+import { DEFAULT_CLOCK, normalizeClockState, snapshotObject } from "./clock.js";
 import { normalizeQuestState } from "./quests.js";
 import { normalizeHistoryState } from "./history.js";
+import { canonicalWorldState } from "./world.js";
 
-export const APP_VERSION = "0.6.0";
-export const AEGIS_VERSION = "6.7.7-mcp.6.0";
-export const SCHEMA_VERSION = "0.6.0";
-export const MIGRATION_KEY = "world-map-npc-compendium-clock-v3";
+export const APP_VERSION = "0.7.0";
+export const AEGIS_VERSION = "6.7.7-mcp.7.0";
+export const SCHEMA_VERSION = "0.7.0";
+export const MIGRATION_KEY = "aelvia-fixed-world-v1";
 
 export interface MigrationResult {
   game: GameState;
@@ -30,24 +31,7 @@ export function defaultGameState(gameId: string, title = "AEGIS 冒險"): GameSt
     revision: 0,
     createdAt: now,
     updatedAt: now,
-    world: {
-      name: "",
-      genre: "異世界開放世界",
-      era: "",
-      civilization: "",
-      technology: "",
-      magic: "",
-      currency: "",
-      language: "",
-      religion: "",
-      startRegion: "",
-      calendar: structuredClone(DEFAULT_CALENDAR) as unknown as JsonObject,
-      survivalBalance: {
-        hungerPerGameHour: 2,
-        hydrationPerGameHour: 3,
-      },
-      notes: "",
-    },
+    world: canonicalWorldState(),
     player: defaultPlayerState(),
     inventory: [],
     npcs: [],
@@ -125,6 +109,12 @@ export function buildGameMigration(
   extractLegacyPrivateNpcState(migrated, privateWorld);
   ensureLegacyLocationHierarchy(migrated);
   applyMainCuratedHierarchy(migrated);
+  const legacyDate = migrated.player.date;
+  const legacyTime = migrated.player.time;
+  migrated.world = canonicalWorldState();
+  migrated.player.clock = {};
+  migrated.player.date = typeof legacyDate === "string" ? legacyDate : "";
+  migrated.player.time = typeof legacyTime === "string" ? legacyTime : "";
   normalizeClockState(migrated, true);
   normalizeKnowledgeState(migrated, false);
   normalizeQuestState(migrated, false);

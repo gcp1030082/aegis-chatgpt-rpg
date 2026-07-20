@@ -7,6 +7,8 @@ import type {
   MigrationBackup,
   MigrationCommit,
   PrivateWorldState,
+  ProgressResetCommit,
+  ProgressResetResult,
   SaveRecord,
   SaveSummary,
   TurnRecord,
@@ -107,6 +109,44 @@ export class PostgresGameStore implements GameStore {
     throw new AegisError("REVISION_CONFLICT", "遊戲狀態已被其他回合更新，請重新讀取。", {
       expectedRevision,
       actualRevision: current.revision,
+    });
+  }
+
+  async resetProgress(reset: ProgressResetCommit): Promise<ProgressResetResult> {
+    return this.transaction(async (client) => {
+      const gameId = reset.game.gameId;
+      const result = await client.query<{ revision: number; state: GameState }>(
+        "SELECT revision, state FROM aegis_games WHERE game_id = $1 FOR UPDATE",
+        [gameId],
+      );
+      const current = result.rows[0];
+      if (!current) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${gameId}。`);
+      if (hasIdempotencyKey(current.state, reset.idempotencyKey)) {
+        return { game: current.state, idempotentReplay: true };
+      }
+      if (current.revision !== reset.expectedRevision) {
+        throw new AegisError("REVISION_CONFLICT", "遊戲狀態已被其他回合更新，請重新讀取。", {
+          expectedRevision: reset.expectedRevision,
+          actualRevision: current.revision,
+        });
+      }
+
+      await client.query(
+        `INSERT INTO aegis_private_world (game_id, state, updated_at)
+         VALUES ($1, $2::jsonb, $3)
+         ON CONFLICT (game_id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at`,
+        [gameId, JSON.stringify(reset.privateWorld), reset.privateWorld.updatedAt],
+      );
+      const updated = await client.query<{ state: GameState }>(
+        `UPDATE aegis_games
+         SET revision = $2, state = $3::jsonb, updated_at = $4
+         WHERE game_id = $1
+         RETURNING state`,
+        [gameId, reset.game.revision, JSON.stringify(reset.game), reset.game.updatedAt],
+      );
+      const row = updated.rows[0];
+      if (!row) throw new AegisError("STORAGE_ERROR", "重設玩家進度失敗。");
+      return { game: row.state, idempotentReplay: false };
     });
   }
 
@@ -417,4 +457,9 @@ function toTurnRecord(row: TurnRow): TurnRecord {
 
 function toIsoString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function hasIdempotencyKey(state: GameState, key: string): boolean {
+  const keys = state.engine.idempotencyKeys;
+  return Array.isArray(keys) && keys.includes(key);
 }

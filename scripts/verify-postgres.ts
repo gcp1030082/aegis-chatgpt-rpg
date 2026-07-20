@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { defaultGameState, MIGRATION_KEY, SCHEMA_VERSION } from "../src/domain/default-state.js";
+import {
+  defaultGameState,
+  defaultPrivateWorldState,
+  MIGRATION_KEY,
+  SCHEMA_VERSION,
+} from "../src/domain/default-state.js";
 import type { JsonObject } from "../src/domain/types.js";
 import { AegisService } from "../src/service.js";
 import { PostgresGameStore } from "../src/storage/postgres-store.js";
@@ -26,7 +31,9 @@ const createdGameIds = new Set<string>();
 try {
   await store.initialize();
   const service = new AegisService(store, config);
-  await service.createGame(gameId, "PostgreSQL 端到端驗收");
+  const created = await service.createGame(gameId, "PostgreSQL 端到端驗收");
+  assert.equal(created.world.worldId, "aelvia");
+  assert.equal(created.world.name, "艾爾維亞");
   createdGameIds.add(gameId);
   const turn = await service.prepareTurn(gameId, "建立測試角色並顯示面板");
   const initialized = await service.applyDiff(
@@ -124,6 +131,31 @@ try {
       error.code === "DASHBOARD_ALREADY_SHOWN"),
   );
 
+  const privateBeforeReset = defaultPrivateWorldState(gameId, persisted.updatedAt);
+  privateBeforeReset.npcs["npc-db-guide"] = {
+    trueIdentity: "POSTGRES_RESET_PRIVATE_SENTINEL",
+    privateState: { objective: "重設後不得保留" },
+  };
+  await restartedStore.putPrivateWorld(privateBeforeReset);
+  const resetTurn = await restarted.prepareTurn(gameId, "重設角色、地圖、人物與圖鑑，但保留艾爾維亞");
+  const resetKey = `postgres-e2e-reset-${randomUUID()}`;
+  const reset = await restarted.resetPlayer(gameId, resetTurn.revision, resetKey);
+  assert.equal(reset.game.revision, 3);
+  assert.equal(reset.game.world.worldId, "aelvia");
+  assert.equal(reset.game.world.name, "艾爾維亞");
+  assert.equal(reset.game.player.initialized, false);
+  assert.deepEqual(reset.game.map, []);
+  assert.deepEqual(reset.game.npcs, []);
+  assert.deepEqual(reset.game.compendium, []);
+  assert.deepEqual(reset.game.quests, []);
+  assert.deepEqual((await restarted.getPrivateWorldInternal(gameId)).npcs, {});
+  assert.equal((await restarted.listSaves(gameId)).length, 1);
+  const resetReplay = await restarted.resetPlayer(gameId, resetTurn.revision, resetKey);
+  assert.equal(resetReplay.idempotentReplay, true);
+  assert.equal(resetReplay.game.revision, 3);
+  const resetDashboard = await restarted.dashboard(gameId, resetTurn.turnId);
+  assert.equal(resetDashboard.game.revision, 3);
+
   const legacy = defaultGameState(legacyGameId, "舊 Schema 遷移驗收");
   legacy.schemaVersion = "6.7.7-mcp.5.2";
   legacy.version = "6.7.7-mcp.5.2";
@@ -141,7 +173,7 @@ try {
   assert.equal((await restarted.getPrivateWorldInternal(legacyGameId)).npcs["legacy-db-npc"]?.trueIdentity, "POSTGRES_PRIVATE_SENTINEL");
   assert.equal((await restartedStore.listMigrationBackups(legacyGameId)).length, 1);
 
-  console.log("PostgreSQL 端到端驗收通過：v0.6 旅行原子交易、時鐘、知識、冪等重試、私密狀態、遷移備份、重啟持久性與單回合面板鎖均正常。");
+  console.log("PostgreSQL 端到端驗收通過：v0.7 固定艾爾維亞、旅行原子交易、進度與私密人物重設、時鐘、知識、冪等重試、遷移備份、重啟持久性與單回合面板鎖均正常。");
 } finally {
   await store?.close().catch(() => undefined);
   await restartedStore?.close().catch(() => undefined);

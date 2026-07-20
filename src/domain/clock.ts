@@ -8,7 +8,7 @@ import type {
 } from "./types.js";
 
 export const DEFAULT_CALENDAR: WorldCalendar = {
-  calendarId: "eldra-stars-calendar",
+  calendarId: "aelvia-stars-calendar",
   eraName: "群星曆",
   hoursPerDay: 24,
   minutesPerHour: 60,
@@ -52,6 +52,14 @@ export function normalizeClockState(state: GameState, allowLegacy = false): void
   const clock = normalizeClock(existing, calendar, migrated ?? fallback, allowLegacy);
   state.player.clock = snapshotObject(clock);
   synchronizeLegacyClockCaches(state, calendar, clock);
+}
+
+export function resetGameClock(state: GameState): GameTimeSnapshot {
+  const calendar = normalizeCalendar(state.world.calendar, false, "INVALID_STATE");
+  const clock = defaultClockFor(calendar);
+  state.player.clock = snapshotObject(clock);
+  synchronizeLegacyClockCaches(state, calendar, clock);
+  return clock;
 }
 
 export function validateClockState(state: GameState): void {

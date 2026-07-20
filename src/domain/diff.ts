@@ -18,7 +18,6 @@ import { normalizeHistoryState } from "./history.js";
 import { assertNoPrivateStateFields, assertNoServerManagedFields } from "./metadata.js";
 
 const ALLOWED_TOP_LEVEL = new Set([
-  "world",
   "player",
   "inventory",
   "npcs",
@@ -46,6 +45,13 @@ export function applyStateDiff(
     throw new AegisError("INVALID_DIFF", "State Diff 必須是 JSON 物件。");
   }
 
+  if (rawDiff.world !== undefined) {
+    throw new AegisError(
+      "INVALID_DIFF",
+      "world 是固定的艾爾維亞世界本體，玩家與模型工具不得修改；請把發現內容寫入地圖、人物、任務、圖鑑或歷史。",
+    );
+  }
+
   const unknownKeys = Object.keys(rawDiff).filter((key) => !ALLOWED_TOP_LEVEL.has(key));
   if (unknownKeys.length > 0) {
     throw new AegisError("INVALID_DIFF", `State Diff 含有不允許的頂層欄位：${unknownKeys.join(", ")}`);
@@ -60,10 +66,6 @@ export function applyStateDiff(
   const initializingPlayer = current.player.initialized !== true &&
     isObject(rawDiff.player) && rawDiff.player.initialized === true;
 
-  if (rawDiff.world !== undefined) {
-    if (!isObject(rawDiff.world)) throw invalidSection("world", "物件");
-    mergeObject(next.world, rawDiff.world, "world", changedPaths);
-  }
   if (rawDiff.player !== undefined) {
     if (!isObject(rawDiff.player)) throw invalidSection("player", "物件");
     applyPlayerPatch(next, rawDiff.player, changedPaths);

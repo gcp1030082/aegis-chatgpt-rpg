@@ -234,6 +234,18 @@ export interface MigrationCommit {
   backup: MigrationBackup;
 }
 
+export interface ProgressResetCommit {
+  expectedRevision: number;
+  idempotencyKey: string;
+  game: GameState;
+  privateWorld: PrivateWorldState;
+}
+
+export interface ProgressResetResult {
+  game: GameState;
+  idempotentReplay: boolean;
+}
+
 export interface HistoryState {
   recent: JsonValue[];
   major: JsonValue[];

@@ -18,6 +18,8 @@ describe("runtime context", () => {
     expect(turn.runtimeContext).toContain("expected_revision=7");
     expect(turn.runtimeContext).toContain(`turn_id=${turnId}`);
     expect(turn.runtimeContext).toContain("aegis_apply_state_diff");
+    expect(turn.runtimeContext).toContain("世界本體固定為艾爾維亞");
+    expect(turn.runtimeContext).toContain("不得在任何 State Diff 或 outcome_diff 傳入 world");
     expect(turn.actionTags).toContain("exploration");
   });
 });

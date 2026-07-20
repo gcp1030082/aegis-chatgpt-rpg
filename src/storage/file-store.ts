@@ -9,6 +9,8 @@ import type {
   MigrationBackup,
   MigrationCommit,
   PrivateWorldState,
+  ProgressResetCommit,
+  ProgressResetResult,
   SaveRecord,
   SaveSummary,
   TurnRecord,
@@ -78,6 +80,38 @@ export class FileGameStore implements GameStore {
       }
       await atomicWrite(this.gamePath(gameId), next);
       return cloneState(next);
+    });
+  }
+
+  async resetProgress(reset: ProgressResetCommit): Promise<ProgressResetResult> {
+    return this.mutex.run(reset.game.gameId, async () => {
+      const gameId = reset.game.gameId;
+      const current = await this.getGame(gameId);
+      if (!current) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${gameId}。`);
+      if (hasIdempotencyKey(current, reset.idempotencyKey)) {
+        return { game: cloneState(current), idempotentReplay: true };
+      }
+      if (current.revision !== reset.expectedRevision) {
+        throw new AegisError("REVISION_CONFLICT", "遊戲狀態已被其他回合更新，請重新讀取。", {
+          expectedRevision: reset.expectedRevision,
+          actualRevision: current.revision,
+        });
+      }
+
+      const previousPrivateWorld = await this.getPrivateWorld(gameId);
+      try {
+        await atomicWrite(this.privateWorldPath(gameId), reset.privateWorld);
+        await atomicWrite(this.gamePath(gameId), reset.game);
+      } catch (error) {
+        if (previousPrivateWorld) {
+          await atomicWrite(this.privateWorldPath(gameId), previousPrivateWorld).catch(() => undefined);
+        } else {
+          await unlink(this.privateWorldPath(gameId)).catch(() => undefined);
+        }
+        await atomicWrite(this.gamePath(gameId), current).catch(() => undefined);
+        throw error;
+      }
+      return { game: cloneState(reset.game), idempotentReplay: false };
     });
   }
 
@@ -287,6 +321,11 @@ async function atomicWrite(path: string, value: unknown): Promise<void> {
 
 function serialize(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function hasIdempotencyKey(state: GameState, key: string): boolean {
+  const keys = state.engine.idempotencyKeys;
+  return Array.isArray(keys) && keys.includes(key);
 }
 
 function isNodeError(error: unknown, code: string): boolean {

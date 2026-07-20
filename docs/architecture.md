@@ -4,7 +4,9 @@
 
 | Data | Owner | Lifetime |
 |---|---|---|
-| World, player, player-known map/NPC/compendium, inventory, quests, history | MCP backend | Durable |
+| Fixed Aelvia world foundation (`world`) | MCP backend code | Durable and immutable to player/model tools |
+| Player, player-known map/NPC/compendium, inventory, quests, history | MCP backend state | Durable; resettable as player progress |
+| Private NPC progression | MCP backend private state | Durable; cleared atomically with player progress reset |
 | Disaster-recovery snapshots | MCP backend, developer-only | Durable |
 | Current turnId and dashboard claim | MCP backend control plane | Until the next prepared turn; durable across restart |
 | Selected widget tab | ChatGPT widget | Message-scoped |
@@ -26,7 +28,9 @@
 11. The widget deduplicates by `gameId + turnId + revision`, rejects older revisions, and changes tabs locally without tools or mutations. A later no-write turn may legitimately show the same revision with a new `turnId`.
 12. On `REVISION_CONFLICT`, the model starts again from step 2 and must not render the rejected intermediate state or reuse its old `turnId`.
 
-Travel and other long events can include an `outcome_diff` in `aegis_advance_time`, so elapsed time, survival costs, location, newly known map entries, NPCs, compendium entries, quests, and the event result commit atomically in one revision.
+Travel and other long events can include an `outcome_diff` in `aegis_advance_time`, so elapsed time, survival costs, location, newly known map entries, NPCs, compendium entries, quests, and the event result commit atomically in one revision. Neither `aegis_apply_state_diff` nor `outcome_diff` accepts `world`; world discoveries belong in map, NPC, quest, compendium, or history records.
+
+`aegis_reset_player` is the only player-facing reset path. It preserves the fixed Aelvia world and developer-only recovery snapshots while one storage transaction clears the character, inventory/equipment, quests, history, map knowledge, public NPC knowledge, compendium, and private NPC progression. Its revision and idempotency checks use the same concurrency rules as other writes.
 
 ## Failure model
 

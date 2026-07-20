@@ -15,7 +15,6 @@ describe("applyStateDiff", () => {
     const result = applyStateDiff(
       state,
       {
-        world: { name: "阿斯特", currency: "銀幣" },
         player: {
           name: "洛恩",
           initialized: true,
@@ -38,7 +37,7 @@ describe("applyStateDiff", () => {
     );
 
     expect(result.game.revision).toBe(1);
-    expect(result.game.world.name).toBe("阿斯特");
+    expect(result.game.world).toMatchObject({ worldId: "aelvia", name: "艾爾維亞" });
     expect(result.game.player.name).toBe("洛恩");
     expect(result.game.inventory).toEqual([
       expect.objectContaining({
@@ -124,6 +123,12 @@ describe("applyStateDiff", () => {
     expect(() => applyStateDiff(state, { revision: 99 }, options)).toThrow(/不允許|伺服器管理/);
     const dangerous = JSON.parse('{"player":{"__proto__":{"admin":true}}}');
     expect(() => applyStateDiff(state, dangerous, options)).toThrow(/禁止欄位/);
+  });
+
+  it("rejects every player or model attempt to modify the fixed Aelvia world", () => {
+    const state = defaultGameState("main");
+    expect(() => applyStateDiff(state, { world: { name: "其他世界" } }, options))
+      .toThrow(/固定的艾爾維亞世界本體/);
   });
 
   it("removes world collections by a bare stable ID or an identifying object", () => {

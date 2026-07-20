@@ -39,7 +39,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     { name: "aegis-rpg", version: APP_VERSION },
     {
       instructions:
-        "AEGIS State 是單一流動世界的唯一權威。每回合先靜默呼叫 aegis_prepare_turn；prepare_turn 與 get_game_state 不顯示面板，只有 aegis_show_dashboard 可顯示綜合面板。prepare_turn 簽發 turnId 但不改 State 或 revision。持久狀態必須先成功寫入才能敘述為既成事實；沒有真實變化不得虛構 revision。時間流逝沿用 aegis_advance_time，新呼叫優先使用整數 elapsed_minutes；旅行的 GameClock、生存、player.location.mapId、地圖、單向路線、人物、任務、圖鑑與歷史必須放在同一 outcome_diff 原子提交，且 history 不得重複主要旅行事件。player.location.mapId 是唯一權威位置，文字路徑與 date/time/season 皆由伺服器衍生，禁止直接修改 clock 或 metadata。map 使用 mapId、routeId、facilityId、dangerId 並區分 parentMapId 階層、路線危險與地點危險。game.npcs 只保存玩家已知資料，使用 npcId、infoId、serviceId、memoryId；禁止秘密、私密動機與逐字稿。quests 使用 questId。compendium 使用 entryId、categoryLabel、stage，以及具 factId、sources、confidence 的 facts；不得保存人物個體或世界全知資料。歷史使用具 eventId 的結構化事件。食用飲用使用 aegis_use_item；生存事件使用 aegis_apply_survival_event；裝備只使用 equip/unequip；玩家重設只使用 reset_player。物品 category 只能是 consumable、equipment、misc、special，每件實體物品具有唯一 instanceId；技能使用單一 category、繁中 categoryLabel、effects 與 acquisition。AEGIS 僅自動保存，不提供玩家手動存讀檔。完成所有必要寫入後，以本回合 turnId 恰好呼叫一次 aegis_show_dashboard；舊客戶端若沒有 turn_id 欄位可只傳 game_id，由伺服器原子認領有效回合。所有頁籤、節點點擊、拖曳、縮放與列表切換皆為純前端操作，不呼叫工具、不推進時間、不新增 revision。",
+        "AEGIS State 是單一流動世界的唯一權威。世界本體固定為艾爾維亞——一個包含多種族、魔法、魔物、地下城、公會、王國、宗教、鍊金與魔導技術的劍與魔法異世界；world 由伺服器管理，玩家與模型工具都不得改寫。每回合先靜默呼叫 aegis_prepare_turn；prepare_turn 與 get_game_state 不顯示面板，只有 aegis_show_dashboard 可顯示綜合面板。prepare_turn 簽發 turnId 但不改 State 或 revision。持久狀態必須先成功寫入才能敘述為既成事實；沒有真實變化不得虛構 revision。時間流逝沿用 aegis_advance_time，新呼叫優先使用整數 elapsed_minutes；旅行的 GameClock、生存、player.location.mapId、地圖、單向路線、人物、任務、圖鑑與歷史必須放在同一 outcome_diff 原子提交，且 history 不得重複主要旅行事件。player.location.mapId 是唯一權威位置，文字路徑與 date/time/season 皆由伺服器衍生，禁止直接修改 clock 或 metadata。map 使用 mapId、routeId、facilityId、dangerId 並區分 parentMapId 階層、路線危險與地點危險。game.npcs 只保存玩家已知資料，使用 npcId、infoId、serviceId、memoryId；禁止秘密、私密動機與逐字稿。quests 使用 questId。compendium 使用 entryId、categoryLabel、stage，以及具 factId、sources、confidence 的 facts；不得保存人物個體或世界全知資料。歷史使用具 eventId 的結構化事件。食用飲用使用 aegis_use_item；生存事件使用 aegis_apply_survival_event；裝備只使用 equip/unequip；玩家要求重設進度時只使用 reset_player，它會保留艾爾維亞並清除角色、物品、裝備、任務、歷史、地圖、人物知識、圖鑑與私密人物進度。物品 category 只能是 consumable、equipment、misc、special，每件實體物品具有唯一 instanceId；技能使用單一 category、繁中 categoryLabel、effects 與 acquisition。AEGIS 僅自動保存，不提供玩家手動存讀檔。完成所有必要寫入後，以本回合 turnId 恰好呼叫一次 aegis_show_dashboard；舊客戶端若沒有 turn_id 欄位可只傳 game_id，由伺服器原子認領有效回合。所有頁籤、節點點擊、拖曳、縮放與列表切換皆為純前端操作，不呼叫工具、不推進時間、不新增 revision。",
     },
   );
 
@@ -110,10 +110,10 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_create_game",
     {
       title: "建立 AEGIS 遊戲",
-      description: "建立新的永久 AEGIS 世界；不會覆寫已存在的 game_id。",
+      description: "在固定世界艾爾維亞建立新的永久 AEGIS 遊戲；不會覆寫已存在的 game_id，也不能建立其他世界本體。",
       inputSchema: {
         game_id: gameIdSchema,
-        title: z.string().max(100).optional().describe("遊戲顯示名稱。"),
+        title: z.string().max(100).optional().describe("冒險顯示名稱；不會改變固定世界艾爾維亞的名稱。"),
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, false, true),
@@ -166,7 +166,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       return {
         turn,
         nextStep:
-          `Resolve only this player action. Use specialized write tools for time, item use, survival, equipment, or player reset, and aegis_apply_state_diff for other changes. Narrate completion only after the required write succeeds. After every write is finished, call aegis_show_dashboard exactly once with turn_id=${turn.turnId}; never show an intermediate revision or reuse an older turnId. If the client tool schema does not expose turn_id, call aegis_show_dashboard exactly once with game_id only so the server can atomically claim the active turn. Do not offer manual save or load.`,
+          `Resolve only this player action in the fixed Aelvia world. Never include world in a state diff. Use specialized write tools for time, item use, survival, equipment, or player reset, and aegis_apply_state_diff for other progress changes. Narrate completion only after the required write succeeds. After every write is finished, call aegis_show_dashboard exactly once with turn_id=${turn.turnId}; never show an intermediate revision or reuse an older turnId. If the client tool schema does not expose turn_id, call aegis_show_dashboard exactly once with game_id only so the server can atomically claim the active turn. Do not offer manual save or load.`,
       };
     }),
   );
@@ -176,13 +176,13 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_apply_state_diff",
     {
       title: "提交 AEGIS 狀態變更",
-      description: "在永久狀態確實改變時提交一個已準備回合。直接陣列代表完整覆寫，空陣列代表清空；增量修改使用明確操作。",
+      description: "在永久進度確實改變時提交一個已準備回合；world 是固定的艾爾維亞世界本體，禁止修改。直接陣列代表完整覆寫，空陣列代表清空；增量修改使用明確操作。",
       inputSchema: {
         game_id: gameIdSchema,
         expected_revision: z.number().int().nonnegative().describe("aegis_prepare_turn 回傳的 revision。"),
         idempotency_key: idempotencySchema,
         diff: z.record(z.unknown()).describe(
-          "只含 world、player、inventory、npcs、compendium、map、quests、history。集合使用 replace/upsert/remove；直接陣列是完整替換。不得指定 player.clock/date/time/season 或伺服器 metadata。map 使用 mapId、kind、discovery；routes 使用 routeId/toMapId/estimatedMinutes/knowledgeStatus，facilities 與 knownDangers 使用穩定 ID。npcs 使用 npcId 與玩家已知的 relationship.label、location、knownInformation、services、memories。quests 使用 questId。compendium 使用 entryId/category/categoryLabel/stage/facts；每個 fact 需 factId、text、至少一項 sources 與 confidence。history 使用結構化事件。舊版 estimatedTravel、text、knownFacts 等欄位仍會在邊界正規化，但新呼叫應使用 v0.6.0 欄位。",
+          "只含 player、inventory、npcs、compendium、map、quests、history；world 是固定的艾爾維亞世界本體，禁止傳入。集合使用 replace/upsert/remove；直接陣列是完整替換。不得指定 player.clock/date/time/season 或伺服器 metadata。map 使用 mapId、kind、discovery；routes 使用 routeId/toMapId/estimatedMinutes/knowledgeStatus，facilities 與 knownDangers 使用穩定 ID。npcs 使用 npcId 與玩家已知的 relationship.label、location、knownInformation、services、memories。quests 使用 questId。compendium 使用 entryId/category/categoryLabel/stage/facts；每個 fact 需 factId、text、至少一項 sources 與 confidence。history 使用結構化事件。舊版 estimatedTravel、text、knownFacts 等欄位仍會在邊界正規化，但新呼叫應使用 v0.7.0 欄位。",
         ),
         turn_summary: z.string().max(500).optional().describe("本回合狀態變化的簡短摘要。"),
       },
@@ -214,7 +214,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_reset_player",
     {
       title: "重設 AEGIS 玩家",
-      description: "僅在玩家明確要求時原子重設角色資料；保留世界狀態與僅供開發者使用的災難復原快照。",
+      description: "僅在玩家明確要求時原子重設角色進度、地圖、人物知識與圖鑑；固定世界艾爾維亞及僅供開發者使用的災難復原快照會保留。",
       inputSchema: {
         game_id: gameIdSchema,
         expected_revision: z.number().int().nonnegative(),
@@ -223,7 +223,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
       },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, true, true),
-      _meta: silentMeta("重設角色…", "角色已重設並自動保存"),
+      _meta: silentMeta("重設角色進度…", "角色進度已重設並自動保存"),
     },
     async ({ game_id, expected_revision, idempotency_key }) => safeTool(async () => {
       const reset = await service.resetPlayer(game_id, expected_revision, idempotency_key);
@@ -231,7 +231,9 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
         game: toGameView(reset.game),
         changedPaths: reset.changedPaths,
         idempotentReplay: reset.idempotentReplay,
-        message: reset.idempotentReplay ? "角色重設已完成，這是安全重試結果。" : "角色資料已原子化重設；世界設定已依操作規則保留。",
+        message: reset.idempotentReplay
+          ? "角色進度重設已完成，這是安全重試結果。"
+          : "角色、物品、裝備、任務、歷史、地圖、人物知識、圖鑑與私密人物進度已原子重設；固定世界艾爾維亞保持不變。",
       };
     }),
   );
@@ -256,7 +258,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
         new_date: z.string().max(100).optional().describe("舊版相容輸入；伺服器會忽略並由 GameClock 產生日期。"),
         new_time: z.string().max(100).optional().describe("舊版相容輸入；伺服器會忽略並由 GameClock 產生時間。"),
         outcome_diff: z.record(z.unknown()).optional().describe(
-          "與本次時間事件在同一交易提交的結果，可含 world、player（不得含 survival/clock/date/time/season）、inventory、npcs、compendium、map、quests，以及 history.append 的獨立事件；不得重複加入主要時間或旅行事件。",
+          "與本次時間事件在同一交易提交的結果，可含 player（不得含 survival/clock/date/time/season）、inventory、npcs、compendium、map、quests，以及 history.append 的獨立事件；不得包含固定的 world，也不得重複加入主要時間或旅行事件。",
         ),
       },
       outputSchema: resultOutputSchema,

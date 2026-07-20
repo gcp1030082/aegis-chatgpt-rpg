@@ -53,7 +53,7 @@ describe("production HTTP surface", () => {
   it("serves health and initializes MCP on the secret path", async () => {
     const health = await fetch(`${origin}/healthz`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ ok: true, version: "0.6.0" });
+    expect(await health.json()).toMatchObject({ ok: true, version: "0.7.0" });
 
     const healthWithTrailingSlash = await fetch(`${origin}/healthz/`);
     expect(healthWithTrailingSlash.status).toBe(200);
@@ -135,7 +135,7 @@ describe("production HTTP surface", () => {
       "aegis_unequip_item",
     ]));
     expect(names).not.toEqual(expect.arrayContaining([
-      "aegis_create_save", "aegis_list_saves", "aegis_load_save",
+      "aegis_create_save", "aegis_list_saves", "aegis_load_save", "aegis_restart_game", "aegis_delete_world",
     ]));
     for (const tool of toolsPayload.result?.tools ?? []) {
       if (tool.name === "aegis_show_dashboard") {
@@ -153,6 +153,11 @@ describe("production HTTP surface", () => {
     expect(advance?.inputSchema?.properties).toHaveProperty("elapsed_hours");
     expect(advance?.inputSchema?.required ?? []).not.toContain("elapsed_minutes");
     expect(advance?.inputSchema?.required ?? []).not.toContain("elapsed_hours");
+    const reset = toolsPayload.result?.tools?.find((tool) => tool.name === "aegis_reset_player");
+    expect(reset?.description).toContain("固定世界艾爾維亞");
+    expect(reset?.inputSchema?.properties).toHaveProperty("preserve_world");
+    const applyDiff = toolsPayload.result?.tools?.find((tool) => tool.name === "aegis_apply_state_diff");
+    expect(applyDiff?.description).toContain("world 是固定的艾爾維亞世界本體");
 
     const callTool = async (id: number, name: string, args: Record<string, unknown>) => {
       const response = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
