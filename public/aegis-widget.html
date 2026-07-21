@@ -267,7 +267,7 @@
       <div id="status" role="status"></div>
     </main>
 
-    <script type="module">
+    <script>
       let dashboard = null;
       let inventoryItems = [];
       let inventoryCategory = "all";
@@ -285,6 +285,9 @@
       const latestRevisionByGame = new Map();
       let rpcId = 0;
       const pending = new Map();
+      let bridgeInitialized = false;
+      let reportSizeFrame = 0;
+      let lastReportedSize = "";
       const $ = (id) => document.getElementById(id);
 
       const request = (method, params) => new Promise((resolve, reject) => {
@@ -308,11 +311,28 @@
         if (message.method === "ui/notifications/tool-result") update(message.params);
       }, { passive: true });
 
+      window.addEventListener("openai:set_globals", (event) => {
+        updateFromOpenAi(
+          event.detail?.globals?.toolOutput,
+          event.detail?.globals?.toolResponseMetadata,
+        );
+      }, { passive: true });
+
       const bridgeReady = request("ui/initialize", {
-        appInfo: { name: "aegis-dashboard", version: "0.7.0" },
+        appInfo: { name: "aegis-dashboard", version: "0.7.1" },
         appCapabilities: {},
         protocolVersion: "2026-01-26",
-      }).then(() => notify("ui/notifications/initialized", {}));
+      }).then(() => {
+        bridgeInitialized = true;
+        notify("ui/notifications/initialized", {});
+        reportSize();
+      });
+
+      function updateFromOpenAi(toolOutput, responseMetadata) {
+        const canonicalResult = responseMetadata?.mcp_tool_result;
+        if (canonicalResult?.structuredContent) update(canonicalResult);
+        if (toolOutput) update({ structuredContent: toolOutput });
+      }
 
       function update(response) {
         const candidate = response?.structuredContent?.result?.dashboard;
@@ -390,6 +410,21 @@
           ? `進度已自動保存｜${formatDate(autoSave.savedAt)}`
           : "進度已自動保存";
         $("status").textContent = `最後更新：${formatDate(game.updatedAt)}`;
+        reportSize();
+      }
+
+      function reportSize() {
+        if (reportSizeFrame) cancelAnimationFrame(reportSizeFrame);
+        reportSizeFrame = requestAnimationFrame(() => {
+          reportSizeFrame = 0;
+          const width = Math.ceil(document.documentElement.scrollWidth || window.innerWidth);
+          const height = Math.ceil(document.documentElement.scrollHeight || document.body.scrollHeight);
+          const sizeKey = `${width}:${height}`;
+          if (!width || !height || sizeKey === lastReportedSize) return;
+          lastReportedSize = sizeKey;
+          if (bridgeInitialized) notify("ui/notifications/size-changed", { width, height });
+          window.openai?.notifyIntrinsicHeight?.(height);
+        });
       }
 
       function renderStats(player) {
@@ -1627,8 +1662,12 @@
 
       void bridgeReady;
 
-      const legacyOutput = window.openai?.toolOutput;
-      if (legacyOutput) update({ structuredContent: legacyOutput });
+      bridgeReady.catch(() => {
+        if (!dashboard) $("status").textContent = "正在等待 ChatGPT 傳入面板資料…";
+      });
+      updateFromOpenAi(window.openai?.toolOutput, window.openai?.toolResponseMetadata);
+      if (typeof ResizeObserver === "function") new ResizeObserver(reportSize).observe(document.documentElement);
+      reportSize();
     </script>
   </body>
 </html>

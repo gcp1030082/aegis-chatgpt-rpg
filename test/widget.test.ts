@@ -11,7 +11,7 @@ describe("AEGIS dashboard widget", () => {
     expect(html).toContain('data-tab="equipment"');
     expect(html).toContain('data-tab="skills"');
     expect(html).toContain("點擊物品可查看數量、效果、來源與完整資料");
-    expect(html).toContain('version: "0.7.0"');
+    expect(html).toContain('version: "0.7.1"');
     for (const category of ["all", "consumable", "equipment", "misc", "special"]) {
       expect(html).toContain(`data-inventory-category="${category}"`);
     }
@@ -81,10 +81,21 @@ describe("AEGIS dashboard widget", () => {
     expect(html).toContain('`${gameId}:${turnId}:${revision}`');
   });
 
+  it("accepts delayed ChatGPT mobile globals and reports its rendered size", async () => {
+    const html = await readFile(resolve("public/aegis-widget.html"), "utf8");
+    expect(html).toContain('window.addEventListener("openai:set_globals"');
+    expect(html).toContain("event.detail?.globals?.toolOutput");
+    expect(html).toContain("window.openai?.toolResponseMetadata");
+    expect(html).toContain("responseMetadata?.mcp_tool_result");
+    expect(html).toContain('notify("ui/notifications/size-changed"');
+    expect(html).toContain("new ResizeObserver(reportSize)");
+    expect(html).toContain("bridgeReady.catch");
+  });
+
   it("contains syntactically valid widget JavaScript", async () => {
     const html = await readFile(resolve("public/aegis-widget.html"), "utf8");
-    const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
-    if (!script) throw new Error("找不到 widget module script");
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    if (!script) throw new Error("找不到 widget script");
     expect(() => new Script(script)).not.toThrow();
   });
 

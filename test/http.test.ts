@@ -53,7 +53,7 @@ describe("production HTTP surface", () => {
   it("serves health and initializes MCP on the secret path", async () => {
     const health = await fetch(`${origin}/healthz`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ ok: true, version: "0.7.0" });
+    expect(await health.json()).toMatchObject({ ok: true, version: "0.7.1" });
 
     const healthWithTrailingSlash = await fetch(`${origin}/healthz/`);
     expect(healthWithTrailingSlash.status).toBe(200);
@@ -85,7 +85,7 @@ describe("production HTTP surface", () => {
     const payload = (await initialized.json()) as { result?: { serverInfo?: { name?: string } } };
     expect(payload.result?.serverInfo?.name).toBe("aegis-rpg");
 
-    for (const version of ["v1", "v2", "v3", "v4", "v5", "v6", "v7"]) {
+    for (const version of ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"]) {
       const uri = `ui://widget/aegis-dashboard-${version}.html`;
       const dashboardResource = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
         method: "POST",
@@ -139,7 +139,9 @@ describe("production HTTP surface", () => {
     ]));
     for (const tool of toolsPayload.result?.tools ?? []) {
       if (tool.name === "aegis_show_dashboard") {
-        expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v7.html");
+        expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v8.html");
+        expect((tool._meta?.ui as { resourceUri?: string } | undefined)?.resourceUri)
+          .toBe("ui://widget/aegis-dashboard-v8.html");
         expect(tool.inputSchema?.properties).toHaveProperty("turn_id");
         expect(tool.inputSchema?.required).toContain("game_id");
         expect(tool.inputSchema?.required).not.toContain("turn_id");

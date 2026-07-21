@@ -1,6 +1,6 @@
 {
   "name": "aegis-chatgpt-rpg",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "AEGIS persistent sandbox RPG as a ChatGPT App backed by MCP.",
   "type": "module",
