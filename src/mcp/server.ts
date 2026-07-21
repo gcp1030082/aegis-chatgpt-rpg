@@ -9,13 +9,14 @@ import { asAegisError } from "../domain/errors.js";
 import { APP_VERSION, toGameView } from "../domain/default-state.js";
 import type { AegisService } from "../service.js";
 
-const WIDGET_URI = "ui://widget/aegis-dashboard-v7.html";
+const WIDGET_URI = "ui://widget/aegis-dashboard-v8.html";
 const LEGACY_WIDGET_URI = "ui://widget/aegis-dashboard-v1.html";
 const LEGACY_WIDGET_V2_URI = "ui://widget/aegis-dashboard-v2.html";
 const LEGACY_WIDGET_V3_URI = "ui://widget/aegis-dashboard-v3.html";
 const LEGACY_WIDGET_V4_URI = "ui://widget/aegis-dashboard-v4.html";
 const LEGACY_WIDGET_V5_URI = "ui://widget/aegis-dashboard-v5.html";
 const LEGACY_WIDGET_V6_URI = "ui://widget/aegis-dashboard-v6.html";
+const LEGACY_WIDGET_V7_URI = "ui://widget/aegis-dashboard-v7.html";
 const gameIdSchema = z
   .string()
   .min(1)
@@ -103,6 +104,13 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     LEGACY_WIDGET_V6_URI,
     {},
     async () => dashboardResource(LEGACY_WIDGET_V6_URI),
+  );
+  registerAppResource(
+    server,
+    "aegis-dashboard-v7-compat",
+    LEGACY_WIDGET_V7_URI,
+    {},
+    async () => dashboardResource(LEGACY_WIDGET_V7_URI),
   );
 
   registerAppTool(
