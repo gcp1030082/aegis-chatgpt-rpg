@@ -23,7 +23,12 @@ export interface GameStore {
   putPrivateWorld(state: PrivateWorldState): Promise<PrivateWorldState>;
   listMigrationBackups(gameId: string): Promise<MigrationBackup[]>;
   beginTurn(turn: TurnRecord): Promise<TurnRecord>;
-  claimDashboard(gameId: string, turnId?: string): Promise<DashboardClaim>;
+  claimDashboard(gameId: string, turnId: string): Promise<DashboardClaim>;
+  claimOrCreatePresentationDashboard(
+    gameId: string,
+    presentationTurnId: string,
+    presentedAt: string,
+  ): Promise<DashboardClaim>;
   createSave(save: SaveRecord): Promise<SaveRecord>;
   getSave(gameId: string, saveId: string): Promise<SaveRecord | null>;
   listSaves(gameId: string): Promise<SaveSummary[]>;

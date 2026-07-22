@@ -9,7 +9,7 @@ import { asAegisError } from "../domain/errors.js";
 import { APP_VERSION, toGameView } from "../domain/default-state.js";
 import type { AegisService } from "../service.js";
 
-const WIDGET_URI = "ui://widget/aegis-dashboard-v8.html";
+const WIDGET_URI = "ui://widget/aegis-dashboard-v9.html";
 const LEGACY_WIDGET_URI = "ui://widget/aegis-dashboard-v1.html";
 const LEGACY_WIDGET_V2_URI = "ui://widget/aegis-dashboard-v2.html";
 const LEGACY_WIDGET_V3_URI = "ui://widget/aegis-dashboard-v3.html";
@@ -17,6 +17,7 @@ const LEGACY_WIDGET_V4_URI = "ui://widget/aegis-dashboard-v4.html";
 const LEGACY_WIDGET_V5_URI = "ui://widget/aegis-dashboard-v5.html";
 const LEGACY_WIDGET_V6_URI = "ui://widget/aegis-dashboard-v6.html";
 const LEGACY_WIDGET_V7_URI = "ui://widget/aegis-dashboard-v7.html";
+const LEGACY_WIDGET_V8_URI = "ui://widget/aegis-dashboard-v8.html";
 const gameIdSchema = z
   .string()
   .min(1)
@@ -40,7 +41,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     { name: "aegis-rpg", version: APP_VERSION },
     {
       instructions:
-        "AEGIS State 是單一流動世界的唯一權威。世界本體固定為艾爾維亞——一個包含多種族、魔法、魔物、地下城、公會、王國、宗教、鍊金與魔導技術的劍與魔法異世界；world 由伺服器管理，玩家與模型工具都不得改寫。每回合先靜默呼叫 aegis_prepare_turn；prepare_turn 與 get_game_state 不顯示面板，只有 aegis_show_dashboard 可顯示綜合面板。prepare_turn 簽發 turnId 但不改 State 或 revision。持久狀態必須先成功寫入才能敘述為既成事實；沒有真實變化不得虛構 revision。時間流逝沿用 aegis_advance_time，新呼叫優先使用整數 elapsed_minutes；旅行的 GameClock、生存、player.location.mapId、地圖、單向路線、人物、任務、圖鑑與歷史必須放在同一 outcome_diff 原子提交，且 history 不得重複主要旅行事件。player.location.mapId 是唯一權威位置，文字路徑與 date/time/season 皆由伺服器衍生，禁止直接修改 clock 或 metadata。map 使用 mapId、routeId、facilityId、dangerId 並區分 parentMapId 階層、路線危險與地點危險。game.npcs 只保存玩家已知資料，使用 npcId、infoId、serviceId、memoryId；禁止秘密、私密動機與逐字稿。quests 使用 questId。compendium 使用 entryId、categoryLabel、stage，以及具 factId、sources、confidence 的 facts；不得保存人物個體或世界全知資料。歷史使用具 eventId 的結構化事件。食用飲用使用 aegis_use_item；生存事件使用 aegis_apply_survival_event；裝備只使用 equip/unequip；玩家要求重設進度時只使用 reset_player，它會保留艾爾維亞並清除角色、物品、裝備、任務、歷史、地圖、人物知識、圖鑑與私密人物進度。物品 category 只能是 consumable、equipment、misc、special，每件實體物品具有唯一 instanceId；技能使用單一 category、繁中 categoryLabel、effects 與 acquisition。AEGIS 僅自動保存，不提供玩家手動存讀檔。完成所有必要寫入後，以本回合 turnId 恰好呼叫一次 aegis_show_dashboard；舊客戶端若沒有 turn_id 欄位可只傳 game_id，由伺服器原子認領有效回合。所有頁籤、節點點擊、拖曳、縮放與列表切換皆為純前端操作，不呼叫工具、不推進時間、不新增 revision。",
+        "AEGIS State 是單一流動世界的唯一權威。若玩家唯一需求是讀取、重新整理或顯示既有面板，且明確不推進時間、不修改資料，第一個且唯一的 AEGIS 工具必須直接呼叫 aegis_show_dashboard（只傳 game_id）；不得先呼叫 aegis_prepare_turn 或 aegis_get_game_state。伺服器會原子建立不改 State、時間或 revision 的展示回合。其他遊戲回合才先靜默呼叫 aegis_prepare_turn，完成所有必要寫入後以其 turnId 恰好呼叫一次 aegis_show_dashboard。世界本體固定為艾爾維亞——一個包含多種族、魔法、魔物、地下城、公會、王國、宗教、鍊金與魔導技術的劍與魔法異世界；world 由伺服器管理，玩家與模型工具都不得改寫。prepare_turn 與 get_game_state 不顯示面板，只有 aegis_show_dashboard 可顯示綜合面板。prepare_turn 簽發 turnId 但不改 State 或 revision。持久狀態必須先成功寫入才能敘述為既成事實；沒有真實變化不得虛構 revision。時間流逝沿用 aegis_advance_time，新呼叫優先使用整數 elapsed_minutes；旅行的 GameClock、生存、player.location.mapId、地圖、單向路線、人物、任務、圖鑑與歷史必須放在同一 outcome_diff 原子提交，且 history 不得重複主要旅行事件。player.location.mapId 是唯一權威位置，文字路徑與 date/time/season 皆由伺服器衍生，禁止直接修改 clock 或 metadata。map 使用 mapId、routeId、facilityId、dangerId 並區分 parentMapId 階層、路線危險與地點危險。game.npcs 只保存玩家已知資料，使用 npcId、infoId、serviceId、memoryId；禁止秘密、私密動機與逐字稿。quests 使用 questId。compendium 使用 entryId、categoryLabel、stage，以及具 factId、sources、confidence 的 facts；不得保存人物個體或世界全知資料。歷史使用具 eventId 的結構化事件。食用飲用使用 aegis_use_item；生存事件使用 aegis_apply_survival_event；裝備只使用 equip/unequip；玩家要求重設進度時只使用 reset_player，它會保留艾爾維亞並清除角色、物品、裝備、任務、歷史、地圖、人物知識、圖鑑與私密人物進度。物品 category 只能是 consumable、equipment、misc、special，每件實體物品具有唯一 instanceId；技能使用單一 category、繁中 categoryLabel、effects 與 acquisition。AEGIS 僅自動保存，不提供玩家手動存讀檔。舊客戶端若沒有 turn_id 欄位可只傳 game_id，由伺服器原子認領有效回合。所有頁籤、節點點擊、拖曳、縮放與列表切換皆為純前端操作，不呼叫工具、不推進時間、不新增 revision。",
     },
   );
 
@@ -112,6 +113,13 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     {},
     async () => dashboardResource(LEGACY_WIDGET_V7_URI),
   );
+  registerAppResource(
+    server,
+    "aegis-dashboard-v8-compat",
+    LEGACY_WIDGET_V8_URI,
+    {},
+    async () => dashboardResource(LEGACY_WIDGET_V8_URI),
+  );
 
   registerAppTool(
     server,
@@ -141,7 +149,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_get_game_state",
     {
       title: "讀取 AEGIS 狀態",
-      description: "靜默讀取完整權威遊戲狀態，不渲染面板，也不推進遊戲時間。",
+      description: "靜默讀取完整權威遊戲狀態，不渲染面板，也不推進遊戲時間。若玩家只要求顯示或重新整理面板，不要呼叫本工具，直接以 aegis_show_dashboard 作為唯一工具。",
       inputSchema: { game_id: gameIdSchema },
       outputSchema: resultOutputSchema,
       annotations: impact(true, false, false, true),
@@ -158,7 +166,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_prepare_turn",
     {
       title: "準備 AEGIS 回合",
-      description: "每個遊戲回合的靜默第一步；取得權威狀態、適用規則與本回合處理契約，不渲染玩家面板。",
+      description: "一般遊戲行動回合的靜默第一步；取得權威狀態、適用規則與本回合處理契約，不渲染玩家面板。若玩家只要求顯示或重新整理既有面板，不要呼叫本工具。",
       inputSchema: {
         game_id: gameIdSchema,
         player_input: z.string().min(1).max(4000).describe("玩家本回合的原始行動或指令。"),
@@ -416,7 +424,7 @@ export function createAegisMcpServer(service: AegisService, widgetHtml: string):
     "aegis_show_dashboard",
     {
       title: "顯示 AEGIS 儀表板",
-      description: "在本回合所有狀態變更完成後唯一一次顯示綜合面板。應傳入 prepare_turn 簽發的 turnId；若舊版客戶端 schema 尚未提供 turn_id，伺服器會原子認領目前有效回合。過期 turnId 或同一回合的第二次呼叫仍會被拒絕。",
+      description: "若玩家只要求讀取、重新整理或顯示既有面板且不改資料，必須把本工具作為第一個且唯一的 AEGIS 工具，只傳 game_id；伺服器會建立不改時間、State 或 revision 的展示回合。一般遊戲回合則在所有變更完成後唯一一次呼叫，並傳入 prepare_turn 簽發的 turnId。過期 turnId 或同一一般回合的第二次呼叫仍會被拒絕。",
       inputSchema: { game_id: gameIdSchema, turn_id: turnIdSchema.optional() },
       outputSchema: resultOutputSchema,
       annotations: impact(false, false, false, false),

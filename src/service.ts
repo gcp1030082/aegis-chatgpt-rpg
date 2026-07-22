@@ -563,7 +563,13 @@ export class AegisService {
     assertGameId(gameId);
     const id = turnId === undefined ? undefined : cleanTurnId(turnId);
     await this.getGame(gameId);
-    const claimed = await this.store.claimDashboard(gameId, id);
+    const claimed = id === undefined
+      ? await this.store.claimOrCreatePresentationDashboard(
+          gameId,
+          randomUUID(),
+          new Date().toISOString(),
+        )
+      : await this.store.claimDashboard(gameId, id);
     const game = claimed.game;
     validateGameState(game, this.config.maxStateBytes);
     return {
