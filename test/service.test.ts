@@ -401,12 +401,29 @@ describe("AegisService", () => {
 
   it("persists turnId locks and atomically permits exactly one dashboard per turn", async () => {
     await service.createGame("main");
-    await expect(service.dashboard("main"))
-      .rejects.toMatchObject({ code: "TURN_NOT_PREPARED" });
     await expect(service.dashboard("main", "00000000-0000-4000-8000-000000000000"))
       .rejects.toMatchObject({ code: "TURN_NOT_PREPARED" });
 
     const unchanged = await service.getGame("main");
+    const presentation = await service.dashboard("main");
+    expect(presentation.game).toMatchObject({
+      revision: unchanged.revision,
+      updatedAt: unchanged.updatedAt,
+    });
+    expect(presentation.turnId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(presentation.dashboardKey).toBe(
+      `main:${presentation.turnId}:${unchanged.revision}`,
+    );
+    await expect(service.dashboard("main", presentation.turnId))
+      .rejects.toMatchObject({ code: "DASHBOARD_ALREADY_SHOWN" });
+
+    const refreshedPresentation = await service.dashboard("main");
+    expect(refreshedPresentation.turnId).not.toBe(presentation.turnId);
+    expect(refreshedPresentation.game).toMatchObject({
+      revision: unchanged.revision,
+      updatedAt: unchanged.updatedAt,
+    });
+
     const superseded = await service.prepareTurn("main", "先觀察門口");
     const active = await service.prepareTurn("main", "改為觀察窗外");
     expect(active.turnId).not.toBe(superseded.turnId);
@@ -418,7 +435,7 @@ describe("AegisService", () => {
       .rejects.toMatchObject({ code: "TURN_SUPERSEDED" });
 
     const concurrent = await Promise.allSettled([
-      service.dashboard("main"),
+      service.dashboard("main", active.turnId),
       service.dashboard("main", active.turnId),
     ]);
     const fulfilled = concurrent.filter((result) => result.status === "fulfilled");

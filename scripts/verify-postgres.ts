@@ -131,6 +131,18 @@ try {
       error.code === "DASHBOARD_ALREADY_SHOWN"),
   );
 
+  const beforePresentation = await restarted.getGame(gameId);
+  const presentation = await restarted.dashboard(gameId);
+  assert.notEqual(presentation.turnId, noWriteTurn.turnId);
+  assert.equal(presentation.game.revision, beforePresentation.revision);
+  assert.equal(presentation.game.updatedAt, beforePresentation.updatedAt);
+  assert.equal(presentation.dashboardKey, `${gameId}:${presentation.turnId}:2`);
+  await assert.rejects(
+    restarted.dashboard(gameId, presentation.turnId),
+    (error: unknown) => Boolean(error && typeof error === "object" && "code" in error &&
+      error.code === "DASHBOARD_ALREADY_SHOWN"),
+  );
+
   const privateBeforeReset = defaultPrivateWorldState(gameId, persisted.updatedAt);
   privateBeforeReset.npcs["npc-db-guide"] = {
     trueIdentity: "POSTGRES_RESET_PRIVATE_SENTINEL",
@@ -173,7 +185,7 @@ try {
   assert.equal((await restarted.getPrivateWorldInternal(legacyGameId)).npcs["legacy-db-npc"]?.trueIdentity, "POSTGRES_PRIVATE_SENTINEL");
   assert.equal((await restartedStore.listMigrationBackups(legacyGameId)).length, 1);
 
-  console.log("PostgreSQL 端到端驗收通過：v0.7 固定艾爾維亞、旅行原子交易、進度與私密人物重設、時鐘、知識、冪等重試、遷移備份、重啟持久性與單回合面板鎖均正常。");
+  console.log("PostgreSQL 端到端驗收通過：v0.7 固定艾爾維亞、旅行原子交易、進度與私密人物重設、時鐘、知識、冪等重試、遷移備份、重啟持久性、純展示回合與單回合面板鎖均正常。");
 } finally {
   await store?.close().catch(() => undefined);
   await restartedStore?.close().catch(() => undefined);

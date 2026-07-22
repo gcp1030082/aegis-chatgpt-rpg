@@ -53,7 +53,7 @@ describe("production HTTP surface", () => {
   it("serves health and initializes MCP on the secret path", async () => {
     const health = await fetch(`${origin}/healthz`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ ok: true, version: "0.7.1" });
+    expect(await health.json()).toMatchObject({ ok: true, version: "0.7.2" });
 
     const healthWithTrailingSlash = await fetch(`${origin}/healthz/`);
     expect(healthWithTrailingSlash.status).toBe(200);
@@ -82,10 +82,14 @@ describe("production HTTP surface", () => {
       }),
     });
     expect(initialized.status).toBe(200);
-    const payload = (await initialized.json()) as { result?: { serverInfo?: { name?: string } } };
+    const payload = (await initialized.json()) as {
+      result?: { serverInfo?: { name?: string }; instructions?: string };
+    };
     expect(payload.result?.serverInfo?.name).toBe("aegis-rpg");
+    expect(payload.result?.instructions?.slice(0, 512)).toContain("第一個且唯一的 AEGIS 工具");
+    expect(payload.result?.instructions?.slice(0, 512)).toContain("不得先呼叫 aegis_prepare_turn");
 
-    for (const version of ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"]) {
+    for (const version of ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"]) {
       const uri = `ui://widget/aegis-dashboard-${version}.html`;
       const dashboardResource = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
         method: "POST",
@@ -139,9 +143,9 @@ describe("production HTTP surface", () => {
     ]));
     for (const tool of toolsPayload.result?.tools ?? []) {
       if (tool.name === "aegis_show_dashboard") {
-        expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v8.html");
+        expect(tool._meta?.["openai/outputTemplate"]).toBe("ui://widget/aegis-dashboard-v9.html");
         expect((tool._meta?.ui as { resourceUri?: string } | undefined)?.resourceUri)
-          .toBe("ui://widget/aegis-dashboard-v8.html");
+          .toBe("ui://widget/aegis-dashboard-v9.html");
         expect(tool.inputSchema?.properties).toHaveProperty("turn_id");
         expect(tool.inputSchema?.required).toContain("game_id");
         expect(tool.inputSchema?.required).not.toContain("turn_id");
@@ -160,6 +164,12 @@ describe("production HTTP surface", () => {
     expect(reset?.inputSchema?.properties).toHaveProperty("preserve_world");
     const applyDiff = toolsPayload.result?.tools?.find((tool) => tool.name === "aegis_apply_state_diff");
     expect(applyDiff?.description).toContain("world 是固定的艾爾維亞世界本體");
+    const getState = toolsPayload.result?.tools?.find((tool) => tool.name === "aegis_get_game_state");
+    expect(getState?.description).toContain("不要呼叫本工具");
+    const prepareTurn = toolsPayload.result?.tools?.find((tool) => tool.name === "aegis_prepare_turn");
+    expect(prepareTurn?.description).toContain("不要呼叫本工具");
+    const showDashboard = toolsPayload.result?.tools?.find((tool) => tool.name === "aegis_show_dashboard");
+    expect(showDashboard?.description).toContain("第一個且唯一");
 
     const callTool = async (id: number, name: string, args: Record<string, unknown>) => {
       const response = await fetch(`${origin}/mcp/aegis_http_secret_123456`, {
@@ -188,7 +198,14 @@ describe("production HTTP surface", () => {
     expect(createdResult.game?.revision).toBe(0);
     expect(createdResult.dashboard).toBeUndefined();
 
-    const prepared = await callTool(11, "aegis_prepare_turn", {
+    const directlyShown = await callTool(11, "aegis_show_dashboard", { game_id: "ui-flow" });
+    const directlyShownResult = directlyShown.result?.structuredContent?.result as {
+      dashboard?: { turnId?: string; game?: { revision?: number; updatedAt?: string } };
+    };
+    expect(directlyShownResult.dashboard?.turnId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(directlyShownResult.dashboard?.game?.revision).toBe(0);
+
+    const prepared = await callTool(12, "aegis_prepare_turn", {
       game_id: "ui-flow", player_input: "觀察周圍，不推進時間",
     });
     const preparedResult = prepared.result?.structuredContent?.result as {
@@ -199,7 +216,7 @@ describe("production HTTP surface", () => {
     expect(preparedResult.turn?.turnId).toMatch(/^[0-9a-f-]{36}$/);
     expect(preparedResult.dashboard).toBeUndefined();
 
-    const committed = await callTool(12, "aegis_apply_state_diff", {
+    const committed = await callTool(13, "aegis_apply_state_diff", {
       game_id: "ui-flow", expected_revision: 0, idempotency_key: "ui-turn-1",
       diff: {
         player: {
@@ -238,7 +255,7 @@ describe("production HTTP surface", () => {
 
     const turnId = preparedResult.turn?.turnId;
     if (!turnId) throw new Error("prepare_turn 未回傳 turnId");
-    const shown = await callTool(13, "aegis_show_dashboard", { game_id: "ui-flow" });
+    const shown = await callTool(14, "aegis_show_dashboard", { game_id: "ui-flow" });
     const shownResult = shown.result?.structuredContent?.result as {
       dashboard?: { dashboardKey?: string; turnId?: string; game?: { revision?: number; player?: { sp?: number } } };
     };
@@ -251,7 +268,7 @@ describe("production HTTP surface", () => {
       { type: "text", text: "AEGIS 綜合面板已依最新權威狀態產生。" },
     ]);
 
-    const duplicateDashboard = await callTool(14, "aegis_show_dashboard", {
+    const duplicateDashboard = await callTool(15, "aegis_show_dashboard", {
       game_id: "ui-flow", turn_id: turnId,
     });
     expect(duplicateDashboard.result?.isError).toBe(true);
@@ -259,7 +276,7 @@ describe("production HTTP surface", () => {
       error: { code: "DASHBOARD_ALREADY_SHOWN" },
     });
 
-    const rejected = await callTool(15, "aegis_apply_state_diff", {
+    const rejected = await callTool(16, "aegis_apply_state_diff", {
       game_id: "ui-flow", expected_revision: 1, idempotency_key: "ui-no-op",
       diff: { inventory: [], quests: [] },
     });

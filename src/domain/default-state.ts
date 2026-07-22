@@ -9,7 +9,7 @@ import { normalizeQuestState } from "./quests.js";
 import { normalizeHistoryState } from "./history.js";
 import { canonicalWorldState } from "./world.js";
 
-export const APP_VERSION = "0.7.1";
+export const APP_VERSION = "0.7.2";
 export const AEGIS_VERSION = "6.7.7-mcp.7.0";
 export const SCHEMA_VERSION = "0.7.0";
 export const MIGRATION_KEY = "aelvia-fixed-world-v1";

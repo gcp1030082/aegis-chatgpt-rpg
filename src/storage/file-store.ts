@@ -204,7 +204,7 @@ export class FileGameStore implements GameStore {
     });
   }
 
-  async claimDashboard(gameId: string, turnId?: string): Promise<DashboardClaim> {
+  async claimDashboard(gameId: string, turnId: string): Promise<DashboardClaim> {
     return this.mutex.run(gameId, async () => {
       const game = await this.getGame(gameId);
       if (!game) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${gameId}。`);
@@ -215,6 +215,34 @@ export class FileGameStore implements GameStore {
         dashboardRevision: game.revision,
         dashboardShownAt: new Date().toISOString(),
       };
+      await atomicWrite(this.turnPath(gameId), claimed);
+      return { game: cloneState(game), turn: cloneState(claimed) };
+    });
+  }
+
+  async claimOrCreatePresentationDashboard(
+    gameId: string,
+    presentationTurnId: string,
+    presentedAt: string,
+  ): Promise<DashboardClaim> {
+    return this.mutex.run(gameId, async () => {
+      const game = await this.getGame(gameId);
+      if (!game) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${gameId}。`);
+      const activeTurn = await this.getTurn(gameId);
+      const claimed: TurnRecord = activeTurn?.dashboardShownAt === null
+        ? {
+            ...activeTurn,
+            dashboardRevision: game.revision,
+            dashboardShownAt: presentedAt,
+          }
+        : {
+            turnId: presentationTurnId,
+            gameId,
+            preparedRevision: game.revision,
+            preparedAt: presentedAt,
+            dashboardRevision: game.revision,
+            dashboardShownAt: presentedAt,
+          };
       await atomicWrite(this.turnPath(gameId), claimed);
       return { game: cloneState(game), turn: cloneState(claimed) };
     });
@@ -295,11 +323,11 @@ export class FileGameStore implements GameStore {
   }
 }
 
-function assertDashboardTurn(turn: TurnRecord | null, turnId?: string): asserts turn is TurnRecord {
+function assertDashboardTurn(turn: TurnRecord | null, turnId: string): asserts turn is TurnRecord {
   if (!turn) {
     throw new AegisError("TURN_NOT_PREPARED", "尚未準備可顯示面板的回合，請先呼叫 aegis_prepare_turn。");
   }
-  if (turnId !== undefined && turn.turnId !== turnId) {
+  if (turn.turnId !== turnId) {
     throw new AegisError("TURN_SUPERSEDED", "此回合已被較新的回合取代，請使用最新的 turn_id。");
   }
   if (turn.dashboardShownAt !== null) {

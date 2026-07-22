@@ -306,7 +306,7 @@ export class PostgresGameStore implements GameStore {
     });
   }
 
-  async claimDashboard(gameId: string, turnId?: string): Promise<DashboardClaim> {
+  async claimDashboard(gameId: string, turnId: string): Promise<DashboardClaim> {
     return this.transaction(async (client) => {
       const gameResult = await client.query<{ state: GameState }>(
         "SELECT state FROM aegis_games WHERE game_id = $1 FOR UPDATE",
@@ -326,7 +326,7 @@ export class PostgresGameStore implements GameStore {
         throw new AegisError("TURN_NOT_PREPARED", "尚未準備可顯示面板的回合，請先呼叫 aegis_prepare_turn。");
       }
       const turn = toTurnRecord(row);
-      if (turnId !== undefined && turn.turnId !== turnId) {
+      if (turn.turnId !== turnId) {
         throw new AegisError("TURN_SUPERSEDED", "此回合已被較新的回合取代，請使用最新的 turn_id。");
       }
       if (turn.dashboardShownAt !== null) {
@@ -350,6 +350,62 @@ export class PostgresGameStore implements GameStore {
         throw new AegisError("DASHBOARD_ALREADY_SHOWN", "本回合已顯示過 AEGIS 面板，不得再次顯示。");
       }
       return { game, turn: toTurnRecord(claimed) };
+    });
+  }
+
+  async claimOrCreatePresentationDashboard(
+    gameId: string,
+    presentationTurnId: string,
+    presentedAt: string,
+  ): Promise<DashboardClaim> {
+    return this.transaction(async (client) => {
+      const gameResult = await client.query<{ state: GameState }>(
+        "SELECT state FROM aegis_games WHERE game_id = $1 FOR UPDATE",
+        [gameId],
+      );
+      const game = gameResult.rows[0]?.state;
+      if (!game) throw new AegisError("GAME_NOT_FOUND", `找不到遊戲 ${gameId}。`);
+
+      const turnResult = await client.query<TurnRow>(
+        `SELECT game_id, turn_id, prepared_revision, prepared_at,
+                dashboard_revision, dashboard_shown_at
+         FROM aegis_turns WHERE game_id = $1 FOR UPDATE`,
+        [gameId],
+      );
+      const activeTurn = turnResult.rows[0];
+      if (activeTurn?.dashboard_shown_at === null) {
+        const claimedResult = await client.query<TurnRow>(
+          `UPDATE aegis_turns
+           SET dashboard_revision = $2, dashboard_shown_at = $3
+           WHERE game_id = $1 AND dashboard_shown_at IS NULL
+           RETURNING game_id, turn_id, prepared_revision, prepared_at,
+                     dashboard_revision, dashboard_shown_at`,
+          [gameId, game.revision, presentedAt],
+        );
+        const claimed = claimedResult.rows[0];
+        if (!claimed) {
+          throw new AegisError("DASHBOARD_ALREADY_SHOWN", "本回合已顯示過 AEGIS 面板，不得再次顯示。");
+        }
+        return { game, turn: toTurnRecord(claimed) };
+      }
+
+      const presentationResult = await client.query<TurnRow>(
+        `INSERT INTO aegis_turns (
+           game_id, turn_id, prepared_revision, prepared_at, dashboard_revision, dashboard_shown_at
+         ) VALUES ($1, $2, $3, $4, $3, $4)
+         ON CONFLICT (game_id) DO UPDATE SET
+           turn_id = EXCLUDED.turn_id,
+           prepared_revision = EXCLUDED.prepared_revision,
+           prepared_at = EXCLUDED.prepared_at,
+           dashboard_revision = EXCLUDED.dashboard_revision,
+           dashboard_shown_at = EXCLUDED.dashboard_shown_at
+         RETURNING game_id, turn_id, prepared_revision, prepared_at,
+                   dashboard_revision, dashboard_shown_at`,
+        [gameId, presentationTurnId, game.revision, presentedAt],
+      );
+      const presentation = presentationResult.rows[0];
+      if (!presentation) throw new AegisError("STORAGE_ERROR", "建立面板展示回合失敗。");
+      return { game, turn: toTurnRecord(presentation) };
     });
   }
 
